@@ -19,6 +19,24 @@ use repositories::{FileSshRepository, FileThemeRepository};
 use services::AppService;
 
 pub fn main() -> io::Result<()> {
+
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("v{}", env!("LAZY_SSH_VERSION"));
+        return Ok(());
+    }
+
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("ssh-manager {}", env!("LAZY_SSH_VERSION"));
+        println!("A TUI SSH manager that reads/edits ~/.ssh/config directly\n");
+        println!("Usage: ssh-manager [OPTIONS]\n");
+        println!("Options:");
+        println!("  -V, --version    Print version");
+        println!("  -h, --help       Print this help");
+        return Ok(());
+    }
+
     let ssh_repo = FileSshRepository::new();
     let theme_repo = FileThemeRepository::new();
 
