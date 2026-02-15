@@ -14,19 +14,23 @@ before:
     # good idea to do them here:
     - rustup default stable
     - cargo install --locked cargo-zigbuild
+    - cargo install cross
     - cargo fetch --locked
 
 builds:
-  - builder: rust
+  - id: linux
+    builder: rust
     flags:
       - --release
     targets:
       - x86_64-unknown-linux-gnu
-      - x86_64-apple-darwin
-      - x86_64-pc-windows-gnu
       - aarch64-unknown-linux-gnu
-      - aarch64-apple-darwin
-
+  - id: windows
+    builder: rust
+    tool: cross
+    command: build
+    targets:
+      - x86_64-pc-windows-gnu
 archives:
   - formats: [tar.gz]
     # this name template makes the OS and Arch compatible with the results of `uname`.
