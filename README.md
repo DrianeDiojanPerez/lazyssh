@@ -1,3 +1,5 @@
+![Terminal demo]([./images/demo.gi](https://raw.githubusercontent.com/DrianeDiojanPerez/lazyssh/refs/heads/master/demo/demo.png)f)
+
 # lazyssh
 
 A simple SSH connection manager for lazy people.
