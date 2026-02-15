@@ -1,3 +1,8 @@
+
+<div align="center">
+  <img src="https://raw.githubusercontent.com/DrianeDiojanPerez/lazyssh/refs/heads/master/demo/demo.png" alt="lazyssh logo" width="800" height="800"/>
+</div>
+
 # lazyssh
 
 A simple SSH connection manager for lazy people.
