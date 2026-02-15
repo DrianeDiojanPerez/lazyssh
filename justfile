@@ -2,7 +2,7 @@ dry-release:
     goreleaser release --snapshot --clean --verbose
 release:
     goreleaser --clean
-release version:
+add-version version:
     #!/usr/bin/env bash
     set -euo pipefail
 
