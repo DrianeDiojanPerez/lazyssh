@@ -1,4 +1,7 @@
-![Terminal demo]([./images/demo.gi](https://raw.githubusercontent.com/DrianeDiojanPerez/lazyssh/refs/heads/master/demo/demo.png)f)
+
+<div align="center">
+  <img src="[https://raw.githubusercontent.com/DrianeDiojanPerez/lazyssh/refs/heads/master/demo/demo.png)" alt="lazyssh logo" width="600" height="600"/>
+</div>
 
 # lazyssh
 
