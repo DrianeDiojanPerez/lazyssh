@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   goreleaser:
-    runs-on: macos-26-large
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,13 +28,8 @@ jobs:
           go-version: stable
       - name: Install dependencies
         run: |
-               # Install required tools for GoReleaser and packaging
-               brew install zip xz curl zig
-               # Verify installations
-               zip -v
-               tar --version
-               xz --version
-               zig version
+          sudo apt-get update
+          sudo apt-get install -y zip tar
       # More assembly might be required: Docker logins, GPG, etc.
       # It all depends on your needs.
       - name: Run GoReleaser
