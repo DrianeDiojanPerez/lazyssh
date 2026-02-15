@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   goreleaser:
-    runs-on: ubuntu-latest
+    runs-on: macos-26-large
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,13 +28,13 @@ jobs:
           go-version: stable
       - name: Install dependencies
         run: |
-             sudo apt-get update
-             sudo apt-get install -y zip tar curl xz-utils
-             # Install Zig for cross compilation
-             ZIG_VERSION="0.16.0"
-             curl -LO "https://ziglang.org/download/$ZIG_VERSION/zig-linux-x86_64-$ZIG_VERSION.tar.xz"
-             tar xf "zig-linux-x86_64-$ZIG_VERSION.tar.xz"
-             sudo mv "zig-linux-x86_64-$ZIG_VERSION/zig" /usr/local/bin/
+               # Install required tools for GoReleaser and packaging
+               brew install zip xz curl zig
+               # Verify installations
+               zip -v
+               tar --version
+               xz --version
+               zig version
       # More assembly might be required: Docker logins, GPG, etc.
       # It all depends on your needs.
       - name: Run GoReleaser
