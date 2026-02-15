@@ -23,8 +23,10 @@ add-version version:
     # Update Cargo.toml
     sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
 
+    cargo update --workspace
+
     # Commit and tag
-    git add Cargo.toml
+    git add Cargo.toml Cargo.lock
     git commit -m "release v$VERSION"
     git tag "v$VERSION"
 
