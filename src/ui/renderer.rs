@@ -18,9 +18,9 @@ pub fn render(frame: &mut Frame, app: &AppService) {
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(4),
             Constraint::Min(8),
-            Constraint::Length(1),
+            Constraint::Length(2),
         ])
         .split(area);
 
@@ -61,9 +61,8 @@ fn draw_body(frame: &mut Frame, app: &AppService, area: ratatui::layout::Rect) {
 
     let right_panes = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(8), Constraint::Length(11)])
+        .constraints([Constraint::Min(8)])
         .split(columns[1]);
 
     panels::draw_detail_panel(frame, app, right_panes[0]);
-    panels::draw_keybindings(frame, app, right_panes[1]);
 }

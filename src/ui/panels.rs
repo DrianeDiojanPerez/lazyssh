@@ -20,7 +20,8 @@ pub fn draw_header(frame: &mut Frame, app: &AppService, area: Rect) {
         .border_type(BorderType::Thick)
         .border_style(t.accent())
         .style(t.header())
-        .padding(Padding::horizontal(1));
+        .padding(Padding::symmetric(1, 1));
+
 
     let transparency_badge = if t.transparent { " [T]" } else { "" };
 
@@ -30,7 +31,7 @@ pub fn draw_header(frame: &mut Frame, app: &AppService, area: Rect) {
         Span::styled(format!("  {} hosts", app.host_count()), t.muted()),
         Span::styled(format!("  {}", app.config_path_display()), t.muted()),
         Span::styled(format!("  {}{}", t.name, transparency_badge), t.muted()),
-    ]);
+    ]).centered();
 
     frame.render_widget(Paragraph::new(line).block(block), area);
 }
@@ -213,48 +214,6 @@ fn detail_row<'a>(label: &'a str, value: &'a str, label_style: Style, value_styl
     ])
 }
 
-pub fn draw_keybindings(frame: &mut Frame, app: &AppService, area: Rect) {
-    let t = &app.theme;
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(t.border())
-        .title(Span::styled(" Keys ", t.title()))
-        .padding(Padding::new(2, 2, 0, 0))
-        .style(t.base());
-
-    let k = t.bold_accent();
-    let d = t.muted();
-    let sep = Span::styled(" │ ", t.border());
-
-    let lines = vec![
-        Line::from(vec![
-            Span::styled("↑/k", k), Span::styled(" up  ", d), sep.clone(),
-            Span::styled("↓/j", k), Span::styled(" down ", d), sep.clone(),
-            Span::styled("Enter", k), Span::styled(" connect", d),
-        ]),
-        Line::from(vec![
-            Span::styled("a", k), Span::styled(" add  ", d), sep.clone(),
-            Span::styled("e", k), Span::styled(" edit  ", d), sep.clone(),
-            Span::styled("d", k), Span::styled(" delete ", d), sep.clone(),
-            Span::styled("c", k), Span::styled(" cmd", d),
-        ]),
-        Line::from(vec![
-            Span::styled("/", k), Span::styled(" search  ", d), sep.clone(),
-            Span::styled("t", k), Span::styled(" themes ", d), sep.clone(),
-            Span::styled("T", k), Span::styled(" transparent", d),
-        ]),
-        Line::from(vec![
-            Span::styled("r", k), Span::styled(" reload  ", d), sep.clone(),
-            Span::styled("?", k), Span::styled(" help   ", d), sep.clone(),
-            Span::styled("q", k), Span::styled(" quit", d),
-        ]),
-    ];
-
-    frame.render_widget(Paragraph::new(lines).block(block), area);
-}
-
 pub fn draw_status_bar(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
 
@@ -275,8 +234,32 @@ pub fn draw_status_bar(frame: &mut Frame, app: &AppService, area: Rect) {
         }
     };
 
+    let block = Block::default().title_top(Line::from(text).centered().style(style));
+
+    let k = t.bold_accent();
+    let d = t.muted();
+    let sep = Span::styled(" │ ", t.border());
+
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("↑/k", k), Span::styled(" up ", d), sep.clone(),
+            Span::styled("↓/j", k), Span::styled(" down ", d), sep.clone(),
+            Span::styled("Enter", k), Span::styled(" connect ", d), sep.clone(),
+            Span::styled("a", k), Span::styled(" add ", d), sep.clone(),
+            Span::styled("e", k), Span::styled(" edit ", d), sep.clone(),
+            Span::styled("d", k), Span::styled(" delete ", d), sep.clone(),
+            Span::styled("c", k), Span::styled(" cmd ", d), sep.clone(),
+            Span::styled("/", k), Span::styled(" search ", d), sep.clone(),
+            Span::styled("t", k), Span::styled(" themes ", d), sep.clone(),
+            Span::styled("T", k), Span::styled(" transparent ", d), sep.clone(),
+            Span::styled("r", k), Span::styled(" reload ", d), sep.clone(),
+            Span::styled("?", k), Span::styled(" help ", d), sep.clone(),
+            Span::styled("q", k), Span::styled(" quit ", d),
+        ]).centered(),
+    ];
+
     frame.render_widget(
-        Paragraph::new(Span::styled(text, style)).style(t.status_bar()),
+        Paragraph::new(lines).style(t.status_bar()).block(block),
         area,
     );
 }
