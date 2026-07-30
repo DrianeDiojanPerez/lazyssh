@@ -72,7 +72,7 @@ fn on_search(app: &mut AppService, key: KeyEvent) {
         KeyCode::Backspace => app.search_backspace(),
         KeyCode::Up => app.move_cursor_up(),
         KeyCode::Down => app.move_cursor_down(),
-        KeyCode::Char(c) => app.search_type(c),
+        KeyCode::Char(c) if !is_shortcut(key) => app.search_type(c),
         _ => {}
     }
 }
