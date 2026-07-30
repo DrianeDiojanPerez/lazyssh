@@ -180,7 +180,7 @@ impl SshConfigParser {
 
         match key.to_lowercase().as_str() {
             "hostname" => host.hostname = value,
-            "port" => host.port = value.parse().unwrap_or(22),
+            "port" => host.port = value.parse().unwrap_or(SshHost::DEFAULT_PORT),
             "user" => host.user = value,
             "identityfile" => host.identity_file = value,
             _ => host.extra_options.push((key, value)),

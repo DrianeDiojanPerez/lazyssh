@@ -11,11 +11,13 @@ pub struct SshHost {
 }
 
 impl SshHost {
+    pub const DEFAULT_PORT: u16 = 22;
+
     pub fn empty() -> Self {
         Self {
             alias: String::new(),
             hostname: String::new(),
-            port: 22,
+            port: Self::DEFAULT_PORT,
             user: String::new(),
             identity_file: String::new(),
             extra_options: Vec::new(),
@@ -43,7 +45,7 @@ impl SshHost {
     }
 
     pub fn has_custom_port(&self) -> bool {
-        self.port != 22
+        self.port != Self::DEFAULT_PORT
     }
 
     pub fn has_identity_file(&self) -> bool {
