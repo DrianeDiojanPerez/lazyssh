@@ -63,14 +63,19 @@ impl AppService {
 
             search_query: String::new(),
             visible_indices: (0..host_count).collect(),
-            show_command: false,
+            show_command: true,
             notification: None,
             pending_action: Action::Continue,
         }
     }
 
     pub fn config_path_display(&self) -> String {
-        self.ssh_config_path.to_string_lossy().to_string()
+        let path = self.ssh_config_path.to_string_lossy().to_string();
+
+        match dirs::home_dir() {
+            Some(home) => path.replacen(&home.to_string_lossy().to_string(), "~", 1),
+            None => path,
+        }
     }
 
     pub fn host_count(&self) -> usize {
@@ -144,9 +149,17 @@ impl AppService {
     }
 
     pub fn cancel_search(&mut self) {
+        self.clear_filter();
+        self.mode = Mode::Normal;
+    }
+
+    pub fn has_filter(&self) -> bool {
+        !self.search_query.is_empty()
+    }
+
+    pub fn clear_filter(&mut self) {
         self.search_query.clear();
         self.rebuild_filter();
-        self.mode = Mode::Normal;
     }
 
     fn rebuild_filter(&mut self) {
@@ -479,85 +492,7 @@ impl AppService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::Rgb;
-    use std::cell::RefCell;
-
-    struct StubSshRepo {
-        stored: RefCell<Vec<SshHost>>,
-    }
-
-    impl StubSshRepo {
-        fn with(hosts: Vec<SshHost>) -> Self {
-            Self { stored: RefCell::new(hosts) }
-        }
-    }
-
-    impl SshRepository for StubSshRepo {
-        fn load_all(&self) -> (String, Vec<SshHost>) {
-            (String::new(), self.stored.borrow().clone())
-        }
-
-        fn save_all(&self, _preamble: &str, hosts: &[SshHost]) -> Result<PathBuf, String> {
-            *self.stored.borrow_mut() = hosts.to_vec();
-            Ok(PathBuf::from("/stub/config"))
-        }
-
-        fn config_path(&self) -> PathBuf {
-            PathBuf::from("/stub/config")
-        }
-    }
-
-    struct StubThemeRepo;
-
-    impl ThemeRepository for StubThemeRepo {
-        fn load_preference(&self) -> ThemePreference {
-            ThemePreference::default()
-        }
-
-        fn save_preference(&self, _preference: &ThemePreference) {}
-
-        fn catalog(&self) -> Vec<Theme> {
-            let c = || Rgb::new(0, 0, 0);
-            vec![Theme {
-                name: "stub".into(),
-                transparent: true,
-                bg: c(),
-                fg: c(),
-                accent: c(),
-                accent_secondary: c(),
-                border: c(),
-                border_focused: c(),
-                header_bg: c(),
-                header_fg: c(),
-                selected_bg: c(),
-                selected_fg: c(),
-                status_bar_bg: c(),
-                status_bar_fg: c(),
-                error: c(),
-                success: c(),
-                warning: c(),
-                muted: c(),
-                input_bg: c(),
-                input_fg: c(),
-                input_cursor: c(),
-            }]
-        }
-    }
-
-    fn host(alias: &str, port: u16) -> SshHost {
-        SshHost {
-            alias: alias.into(),
-            hostname: "example.com".into(),
-            port,
-            ..SshHost::empty()
-        }
-    }
-
-    fn app_with(hosts: Vec<SshHost>) -> (AppService, StubSshRepo) {
-        let ssh_repo = StubSshRepo::with(hosts);
-        let app = AppService::initialize(&ssh_repo, &StubThemeRepo);
-        (app, ssh_repo)
-    }
+    use crate::test_support::{app_with, host};
 
     fn type_into(app: &mut AppService, field: FormField, text: &str) {
         app.form_field = field;

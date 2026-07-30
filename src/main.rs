@@ -2,6 +2,8 @@ mod input;
 mod models;
 mod repositories;
 mod services;
+#[cfg(test)]
+mod test_support;
 mod ui;
 
 use std::io;
