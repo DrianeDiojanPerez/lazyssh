@@ -37,7 +37,10 @@ fn on_normal(
     }
 
     match key.code {
-        KeyCode::Char('q') | KeyCode::Esc => app.request_quit(),
+        KeyCode::Char('q') => app.request_quit(),
+        // INFO: an active filter is the first thing Esc should undo
+        KeyCode::Esc if app.has_filter() => app.clear_filter(),
+        KeyCode::Esc => app.request_quit(),
 
         KeyCode::Up | KeyCode::Char('k') => app.move_cursor_up(),
         KeyCode::Down | KeyCode::Char('j') => app.move_cursor_down(),
