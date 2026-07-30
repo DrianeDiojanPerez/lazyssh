@@ -96,9 +96,6 @@ impl Theme {
         Style::default().fg(self.success.to_color()).bg(self.background())
     }
 
-    pub fn warning(&self) -> Style {
-        Style::default().fg(self.warning.to_color()).bg(self.background())
-    }
 
     pub fn muted(&self) -> Style {
         Style::default().fg(self.muted.to_color()).bg(self.background())
@@ -125,9 +122,6 @@ impl Theme {
         self.error().add_modifier(Modifier::BOLD)
     }
 
-    pub fn bold_warning(&self) -> Style {
-        self.warning().add_modifier(Modifier::BOLD)
-    }
 
     pub fn bold_accent_secondary(&self) -> Style {
         self.accent_secondary().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)

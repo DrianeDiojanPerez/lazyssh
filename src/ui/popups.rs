@@ -1,141 +1,126 @@
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph},
     Frame,
 };
 
 use crate::models::FormField;
 use crate::services::AppService;
 
-fn centered_popup(width_pct: u16, height_pct: u16, area: Rect) -> Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - height_pct) / 2),
-            Constraint::Percentage(height_pct),
-            Constraint::Percentage((100 - height_pct) / 2),
-        ])
-        .split(area);
+/// Centres a popup of the given size inside the body area, shrinking it to
+/// fit rather than letting it spill over the header and the status bar.
+fn centered(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
 
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - width_pct) / 2),
-            Constraint::Percentage(width_pct),
-            Constraint::Percentage((100 - width_pct) / 2),
-        ])
-        .split(vertical[1])[1]
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    }
 }
 
-pub fn draw_form(frame: &mut Frame, app: &AppService, title: &str) {
+pub fn draw_form(frame: &mut Frame, app: &AppService, title: &str, body: Rect) {
     let t = &app.theme;
-    let area = centered_popup(60, 55, frame.size());
+    let fields = FormField::all();
+
+    let error = app.notification.as_ref().filter(|(_, is_error)| *is_error);
+
+    // two rows per field, a blank row between them, plus the footer block
+    let content_height = (fields.len() * 3) as u16 + if error.is_some() { 2 } else { 1 };
+    let area = centered(58, content_height + 3, body);
     frame.render_widget(Clear, area);
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Double)
+        .border_type(BorderType::Rounded)
         .border_style(t.accent())
         .title(Span::styled(title, t.title()))
         .title_alignment(Alignment::Center)
         .padding(Padding::new(2, 2, 1, 0))
         .style(t.base());
 
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let width = block.inner(area).width as usize;
+    let mut lines: Vec<Line> = Vec::new();
 
-    let fields = FormField::all();
-
-    let mut constraints: Vec<Constraint> = Vec::new();
-    for _ in &fields {
-        constraints.push(Constraint::Length(1));
-        constraints.push(Constraint::Length(1));
-        constraints.push(Constraint::Length(1));
-    }
-    constraints.push(Constraint::Length(2));
-    constraints.push(Constraint::Min(0));
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(constraints)
-        .split(inner);
-
-    for (i, field) in fields.iter().enumerate() {
-        let label_row = i * 3;
-        let value_row = i * 3 + 1;
+    for field in &fields {
         let is_active = *field == app.form_field;
 
+        let marker = if is_active { "▸ " } else { "  " };
         let label_style = if is_active { t.bold_accent() } else { t.muted() };
+        let required = if field.is_required() { "*" } else { "" };
 
-        let label_line = Line::from(vec![
-            Span::styled(format!("  {} ", field.label()), label_style),
-            Span::styled(format!("({})", field.placeholder()), t.muted()),
-        ]);
-        frame.render_widget(Paragraph::new(label_line), rows[label_row]);
+        lines.push(Line::from(vec![
+            Span::styled(format!("{}{}{}", marker, field.label(), required), label_style),
+            Span::styled(format!("  {}", field.placeholder()), t.muted()),
+        ]));
 
         let value = app.form_value(field);
-        let input_style = if is_active { t.input() } else { t.base() };
         let cursor = if is_active { "▎" } else { "" };
+        let input_style = if is_active { t.input() } else { t.muted() };
 
-        let value_line = Line::from(vec![
-            Span::styled(format!("  {}", value), input_style),
-            Span::styled(cursor, Style::default().fg(t.input_cursor.to_color())),
-        ]);
-        frame.render_widget(Paragraph::new(value_line), rows[value_row]);
+        lines.push(Line::from(Span::styled(
+            format!("{:<width$}", format!("  {}{}", value, cursor), width = width),
+            input_style,
+        )));
+        lines.push(Line::from(""));
     }
 
-    let footer_row = fields.len() * 3;
-    if footer_row < rows.len() {
-        let footer = Paragraph::new(Line::from(vec![
-            Span::styled("Tab", t.bold_accent()),
-            Span::styled(" next  ", t.muted()),
-            Span::styled("S-Tab", t.bold_accent()),
-            Span::styled(" prev  ", t.muted()),
-            Span::styled("Ctrl+S / Enter", t.bold_accent()),
-            Span::styled(" save  ", t.muted()),
-            Span::styled("Esc", t.bold_accent()),
-            Span::styled(" cancel", t.muted()),
-        ]))
-        .alignment(Alignment::Center);
-        frame.render_widget(footer, rows[footer_row]);
+    if let Some((message, _)) = error {
+        lines.push(Line::from(Span::styled(format!("  {}", message), t.bold_error())));
     }
+
+    lines.push(Line::from(vec![
+        Span::styled("  * required   ", t.muted()),
+        Span::styled("Tab", t.bold_accent()),
+        Span::styled(" next  ", t.muted()),
+        Span::styled("Enter", t.bold_accent()),
+        Span::styled(" save  ", t.muted()),
+        Span::styled("Esc", t.bold_accent()),
+        Span::styled(" cancel", t.muted()),
+    ]));
+
+    // INFO: on a terminal too short for the whole form, scroll just enough to
+    // keep the field being edited on screen
+    let inner_height = block.inner(area).height as usize;
+    let active_row = fields.iter().position(|f| *f == app.form_field).unwrap_or(0) * 3 + 2;
+    let scroll = active_row.saturating_sub(inner_height) as u16;
+
+    frame.render_widget(Paragraph::new(lines).block(block).scroll((scroll, 0)), area);
 }
 
-pub fn draw_delete_confirmation(frame: &mut Frame, app: &AppService, index: usize) {
+pub fn draw_delete_confirmation(frame: &mut Frame, app: &AppService, index: usize, body: Rect) {
     let t = &app.theme;
-    let area = centered_popup(50, 28, frame.size());
+    let area = centered(52, 8, body);
     frame.render_widget(Clear, area);
 
-    let alias = app
-        .host_at(index)
-        .map(|h| h.alias.as_str())
-        .unwrap_or("?");
+    let alias = app.host_at(index).map(|h| h.alias.as_str()).unwrap_or("?");
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Double)
+        .border_type(BorderType::Rounded)
         .border_style(t.error())
-        .title(Span::styled(" Confirm Delete ", t.bold_error()))
+        .title(Span::styled(" Delete host ", t.bold_error()))
         .title_alignment(Alignment::Center)
-        .padding(Padding::new(2, 2, 1, 1))
+        .padding(Padding::new(2, 2, 1, 0))
         .style(t.base());
 
     let body = Text::from(vec![
-        Line::from(""),
         Line::from(Span::styled(
-            format!("Remove 'Host {}' from ~/.ssh/config?", alias),
+            format!("Remove '{}' from ~/.ssh/config?", alias),
             t.base().add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        Line::from(Span::styled("A backup will be created first.", t.muted())),
+        Line::from(Span::styled("A timestamped backup is written first.", t.muted())),
         Line::from(""),
         Line::from(vec![
             Span::styled("y", t.bold_error()),
-            Span::styled(" confirm    ", t.muted()),
-            Span::styled("n / Esc", t.bold_accent()),
-            Span::styled(" cancel", t.muted()),
+            Span::styled(" delete    ", t.muted()),
+            Span::styled("Esc", t.bold_accent()),
+            Span::styled(" keep", t.muted()),
         ]),
     ]);
 
@@ -145,22 +130,20 @@ pub fn draw_delete_confirmation(frame: &mut Frame, app: &AppService, index: usiz
     );
 }
 
-pub fn draw_theme_selector(frame: &mut Frame, app: &AppService) {
+pub fn draw_theme_selector(frame: &mut Frame, app: &AppService, body: Rect) {
     let t = &app.theme;
-    let area = centered_popup(55, 60, frame.size());
+    let height = app.available_themes.len() as u16 + 5;
+    let area = centered(46, height, body);
     frame.render_widget(Clear, area);
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Double)
+        .border_type(BorderType::Rounded)
         .border_style(t.accent_secondary())
-        .title(Span::styled(" Select Theme ", t.title()))
+        .title(Span::styled(" Themes ", t.title()))
         .title_alignment(Alignment::Center)
         .padding(Padding::new(2, 2, 1, 0))
         .style(t.base());
-
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
 
     let mut lines = Vec::new();
 
@@ -168,110 +151,124 @@ pub fn draw_theme_selector(frame: &mut Frame, app: &AppService) {
         let is_pointed = i == app.theme_cursor;
         let is_active = i == app.theme_preference.theme_index;
 
-        let pointer = if is_pointed { " ▸ " } else { "   " };
-        let badge = if is_active { " (active)" } else { "" };
-
         let name_style = if is_pointed {
             Style::default().fg(theme.accent.to_color()).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.fg.to_color())
         };
 
-        let trans_mark = if theme.transparent { " [T]" } else { "" };
-
         lines.push(Line::from(vec![
-            Span::styled(pointer, name_style),
+            Span::styled(if is_pointed { "▸ " } else { "  " }, name_style),
             Span::styled("██", Style::default().fg(theme.accent.to_color())),
             Span::styled("██", Style::default().fg(theme.accent_secondary.to_color())),
             Span::styled("██", Style::default().fg(theme.success.to_color())),
             Span::styled("██", Style::default().fg(theme.warning.to_color())),
-            Span::styled("  ", name_style),
-            Span::styled(&theme.name, name_style),
-            Span::styled(trans_mark, name_style),
-            Span::styled(badge, Style::default().fg(theme.success.to_color())),
+            Span::styled(format!("  {}", theme.name), name_style),
+            Span::styled(if theme.transparent { " [T]" } else { "" }, name_style),
+            Span::styled(
+                if is_active { "  (active)" } else { "" },
+                Style::default().fg(theme.success.to_color()),
+            ),
         ]));
-        lines.push(Line::from(""));
     }
 
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "Stored in ~/.config/ssh-manager/theme.json",
-        t.muted(),
-    )));
-    lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled("↑/↓", t.bold_accent()),
-        Span::styled(" navigate  ", t.muted()),
+        Span::styled("  ↑↓", t.bold_accent()),
+        Span::styled(" browse  ", t.muted()),
         Span::styled("Enter", t.bold_accent()),
         Span::styled(" apply  ", t.muted()),
         Span::styled("Esc", t.bold_accent()),
         Span::styled(" close", t.muted()),
     ]));
 
-    frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), inner);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-pub fn draw_help(frame: &mut Frame, app: &AppService) {
+pub fn draw_help(frame: &mut Frame, app: &AppService, body: Rect) {
     let t = &app.theme;
-    let area = centered_popup(60, 78, frame.size());
+
+    let left = [
+        ("Navigation", ""),
+        ("↑ / k", "move up"),
+        ("↓ / j", "move down"),
+        ("g / G", "top / bottom"),
+        ("/", "search hosts"),
+        ("Esc", "clear the filter"),
+        ("", ""),
+        ("Hosts", ""),
+        ("Enter", "connect"),
+        ("a", "add a host"),
+        ("e", "edit selected"),
+        ("d", "delete selected"),
+        ("r", "reload from disk"),
+    ];
+
+    let right = [
+        ("Form", ""),
+        ("Tab", "next field"),
+        ("S-Tab", "previous field"),
+        ("Enter", "save"),
+        ("Esc", "cancel"),
+        ("", ""),
+        ("Look", ""),
+        ("t", "pick a theme"),
+        ("T", "transparency"),
+        ("", ""),
+        ("Other", ""),
+        ("c", "show ssh command"),
+        ("q", "quit"),
+    ];
+
+    let rows = left.len().max(right.len());
+    let area = centered(70, rows as u16 + 7, body);
     frame.render_widget(Clear, area);
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Double)
+        .border_type(BorderType::Rounded)
         .border_style(t.accent())
         .title(Span::styled(" Help ", t.title()))
         .title_alignment(Alignment::Center)
-        .padding(Padding::new(3, 3, 1, 0))
+        .padding(Padding::new(2, 2, 1, 0))
         .style(t.base());
 
-    let k = t.bold_accent();
-    let d = t.base();
-    let section = t.bold_accent_secondary();
-
-    let lines = vec![
-        Line::from(Span::styled("Reads and writes ~/.ssh/config directly.", d)),
-        Line::from(Span::styled("A backup is created before every change.", t.muted())),
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "Reads and writes ~/.ssh/config, backing it up on every change.",
+            t.muted(),
+        )),
         Line::from(""),
-        Line::from(Span::styled("Navigation", section)),
-        Line::from(""),
-        help_row("  ↑ / k         ", "Move up", k, d),
-        help_row("  ↓ / j         ", "Move down", k, d),
-        help_row("  g / G         ", "Jump to top / bottom", k, d),
-        Line::from(""),
-        Line::from(Span::styled("Actions", section)),
-        Line::from(""),
-        help_row("  Enter         ", "SSH into selected host", k, d),
-        help_row("  a             ", "Add new host", k, d),
-        help_row("  e             ", "Edit selected host", k, d),
-        help_row("  d             ", "Delete (with backup)", k, d),
-        help_row("  c             ", "Toggle SSH command display", k, d),
-        help_row("  /             ", "Search hosts", k, d),
-        help_row("  r             ", "Reload from disk", k, d),
-        Line::from(""),
-        Line::from(Span::styled("Appearance", section)),
-        Line::from(""),
-        help_row("  t             ", "Theme selector", k, d),
-        help_row("  T             ", "Toggle transparency", k, d),
-        Line::from(""),
-        Line::from(Span::styled("Form", section)),
-        Line::from(""),
-        help_row("  Tab / S-Tab   ", "Next / previous field", k, d),
-        help_row("  Ctrl+S/Enter  ", "Save to ~/.ssh/config", k, d),
-        help_row("  Esc           ", "Cancel / close", k, d),
-        Line::from(""),
-        Line::from(Span::styled("Press Esc to close", t.muted())),
     ];
 
-    frame.render_widget(
-        Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
-        area,
-    );
+    for i in 0..rows {
+        let mut spans = help_cell(left.get(i), t.bold_accent(), t.base(), t.bold_accent_secondary());
+        spans.extend(help_cell(right.get(i), t.bold_accent(), t.base(), t.bold_accent_secondary()));
+        lines.push(Line::from(spans));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("Esc closes this help", t.muted())));
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn help_row<'a>(key: &'a str, desc: &'a str, key_style: Style, desc_style: Style) -> Line<'a> {
-    Line::from(vec![
-        Span::styled(key, key_style),
-        Span::styled(desc, desc_style),
-    ])
+fn help_cell<'a>(
+    entry: Option<&(&'a str, &'a str)>,
+    key_style: Style,
+    desc_style: Style,
+    section_style: Style,
+) -> Vec<Span<'a>> {
+    let Some((key, desc)) = entry else {
+        return vec![Span::raw(format!("{:<32}", ""))];
+    };
+
+    if desc.is_empty() {
+        return vec![Span::styled(format!("{:<32}", key), section_style)];
+    }
+
+    vec![
+        Span::styled(format!("  {:<8}", key), key_style),
+        Span::styled(format!("{:<22}", desc), desc_style),
+    ]
 }
