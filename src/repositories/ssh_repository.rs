@@ -187,20 +187,23 @@ impl SshConfigParser {
         }
     }
 
+    /// ssh_config accepts `Key Value`, `Key=Value` and `Key = Value`, so the
+    /// key ends at whichever separator comes first. Splitting on `=` before
+    /// whitespace would cut `SetEnv NAME=value` in the wrong place.
     fn split_key_value(line: &str) -> (String, String) {
-        if let Some(pos) = line.find('=') {
-            let k = line[..pos].trim().to_string();
-            let v = line[pos + 1..].trim().to_string();
-            return (k, v);
-        }
+        let separator = line
+            .char_indices()
+            .find(|(_, c)| c.is_whitespace() || *c == '=')
+            .map(|(i, _)| i);
 
-        if let Some(pos) = line.find(char::is_whitespace) {
-            let k = line[..pos].trim().to_string();
-            let v = line[pos..].trim().to_string();
-            return (k, v);
-        }
+        let Some(pos) = separator else {
+            return (String::new(), String::new());
+        };
 
-        (String::new(), String::new())
+        let rest = line[pos..].trim_start();
+        let rest = rest.strip_prefix('=').unwrap_or(rest);
+
+        (line[..pos].trim().to_string(), rest.trim().to_string())
     }
 
     fn strip_inline_comment(s: &str) -> &str {
@@ -221,5 +224,53 @@ impl SshConfigParser {
         }
 
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn round_trip(config: &str) -> String {
+        let (preamble, hosts) = SshConfigParser::parse(config);
+        FileSshRepository::serialize(&preamble, &hosts)
+    }
+
+    #[test]
+    fn an_option_value_containing_equals_survives_a_round_trip() {
+        let config = "Host box\n    HostName 10.0.0.5\n    SetEnv TERM=xterm-256color\n";
+
+        assert!(
+            round_trip(config).contains("SetEnv TERM=xterm-256color"),
+            "SetEnv lost its '=':\n{}",
+            round_trip(config)
+        );
+    }
+
+    #[test]
+    fn an_option_written_with_equals_is_still_understood() {
+        let (_, hosts) = SshConfigParser::parse("Host box\n    HostName=10.0.0.5\n    Port=2222\n");
+
+        assert_eq!(hosts[0].hostname, "10.0.0.5");
+        assert_eq!(hosts[0].port, 2222);
+    }
+
+    #[test]
+    fn spaces_around_the_equals_are_ignored() {
+        let (_, hosts) = SshConfigParser::parse("Host box\n    Port = 2222\n");
+
+        assert_eq!(hosts[0].port, 2222);
+    }
+
+    #[test]
+    fn unknown_options_keep_their_value_verbatim() {
+        let (_, hosts) = SshConfigParser::parse(
+            "Host box\n    HostName 10.0.0.5\n    ProxyCommand ssh -W %h:%p jump\n",
+        );
+
+        assert_eq!(
+            hosts[0].extra_options,
+            vec![("ProxyCommand".to_string(), "ssh -W %h:%p jump".to_string())]
+        );
     }
 }
