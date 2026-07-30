@@ -12,6 +12,9 @@ pub struct AppService {
     pub cursor: usize,
     pub form_draft: SshHost,
     pub form_field: FormField,
+    // INFO: the port is kept as text while the form is open so it can be
+    // cleared and retyped, and is only parsed when the form is saved
+    form_port: String,
 
     pub theme: Theme,
     pub theme_preference: ThemePreference,
@@ -51,6 +54,7 @@ impl AppService {
             cursor: 0,
             form_draft: SshHost::empty(),
             form_field: FormField::Alias,
+            form_port: String::new(),
 
             theme,
             theme_preference: preference,
@@ -173,6 +177,7 @@ impl AppService {
 
     pub fn begin_add(&mut self) {
         self.form_draft = SshHost::empty();
+        self.form_port = String::new();
         self.form_field = FormField::Alias;
         self.mode = Mode::AddHost;
     }
@@ -180,6 +185,7 @@ impl AppService {
     pub fn begin_edit(&mut self) {
         if let Some(index) = self.selected_real_index() {
             self.form_draft = self.hosts[index].clone();
+            self.form_port = self.form_draft.port.to_string();
             self.form_field = FormField::Alias;
             self.mode = Mode::EditHost(index);
         }
@@ -191,25 +197,52 @@ impl AppService {
         }
     }
 
-    pub fn commit_add(&mut self, ssh_repo: &dyn SshRepository) {
-        if !self.form_draft.is_valid() {
-            self.notification = Some(("Alias and HostName are required".into(), true));
-            return;
+    fn build_draft(&self) -> Result<SshHost, String> {
+        let mut draft = SshHost {
+            alias: self.form_draft.alias.trim().to_string(),
+            hostname: self.form_draft.hostname.trim().to_string(),
+            port: SshHost::DEFAULT_PORT,
+            user: self.form_draft.user.trim().to_string(),
+            identity_file: self.form_draft.identity_file.trim().to_string(),
+            extra_options: self.form_draft.extra_options.clone(),
+        };
+
+        if !draft.is_valid() {
+            return Err("Alias and HostName are required".into());
+        }
+        if draft.alias.split_whitespace().count() > 1 {
+            return Err("Alias cannot contain spaces".into());
+        }
+        if draft.hostname.split_whitespace().count() > 1 {
+            return Err("HostName cannot contain spaces".into());
         }
 
+        draft.port = self.parse_form_port()?;
+        Ok(draft)
+    }
+
+    pub fn commit_add(&mut self, ssh_repo: &dyn SshRepository) {
+        let draft = match self.build_draft() {
+            Ok(draft) => draft,
+            Err(message) => {
+                self.notification = Some((message, true));
+                return;
+            }
+        };
+
         let alias_exists = self.hosts.iter().any(|h| {
-            h.alias.to_lowercase() == self.form_draft.alias.to_lowercase()
+            h.alias.to_lowercase() == draft.alias.to_lowercase()
         });
         if alias_exists {
             self.notification = Some((
-                format!("'{}' already exists", self.form_draft.alias),
+                format!("'{}' already exists", draft.alias),
                 true,
             ));
             return;
         }
 
-        let name = self.form_draft.alias.clone();
-        self.hosts.push(self.form_draft.clone());
+        let name = draft.alias.clone();
+        self.hosts.push(draft);
 
         match ssh_repo.save_all(&self.preamble, &self.hosts) {
             Ok(_) => {
@@ -226,25 +259,28 @@ impl AppService {
     }
 
     pub fn commit_edit(&mut self, index: usize, ssh_repo: &dyn SshRepository) {
-        if !self.form_draft.is_valid() {
-            self.notification = Some(("Alias and HostName are required".into(), true));
-            return;
-        }
+        let draft = match self.build_draft() {
+            Ok(draft) => draft,
+            Err(message) => {
+                self.notification = Some((message, true));
+                return;
+            }
+        };
 
         let duplicate = self.hosts.iter().enumerate().any(|(i, h)| {
-            i != index && h.alias.to_lowercase() == self.form_draft.alias.to_lowercase()
+            i != index && h.alias.to_lowercase() == draft.alias.to_lowercase()
         });
         if duplicate {
             self.notification = Some((
-                format!("'{}' already exists", self.form_draft.alias),
+                format!("'{}' already exists", draft.alias),
                 true,
             ));
             return;
         }
 
-        let name = self.form_draft.alias.clone();
+        let name = draft.alias.clone();
         let backup = self.hosts[index].clone();
-        self.hosts[index] = self.form_draft.clone();
+        self.hosts[index] = draft;
 
         match ssh_repo.save_all(&self.preamble, &self.hosts) {
             Ok(_) => {
@@ -321,23 +357,38 @@ impl AppService {
         self.write_form_field(value);
     }
 
-    fn read_form_field(&self) -> String {
-        match self.form_field {
+    pub fn form_value(&self, field: &FormField) -> String {
+        match field {
             FormField::Alias => self.form_draft.alias.clone(),
             FormField::HostName => self.form_draft.hostname.clone(),
-            FormField::Port => self.form_draft.port.to_string(),
+            FormField::Port => self.form_port.clone(),
             FormField::User => self.form_draft.user.clone(),
             FormField::IdentityFile => self.form_draft.identity_file.clone(),
         }
+    }
+
+    fn read_form_field(&self) -> String {
+        self.form_value(&self.form_field)
     }
 
     fn write_form_field(&mut self, value: String) {
         match self.form_field {
             FormField::Alias => self.form_draft.alias = value,
             FormField::HostName => self.form_draft.hostname = value,
-            FormField::Port => self.form_draft.port = value.parse().unwrap_or(22),
+            FormField::Port => self.form_port = value,
             FormField::User => self.form_draft.user = value,
             FormField::IdentityFile => self.form_draft.identity_file = value,
+        }
+    }
+
+    fn parse_form_port(&self) -> Result<u16, String> {
+        match self.form_port.trim() {
+            "" => Ok(SshHost::DEFAULT_PORT),
+            text => text
+                .parse::<u16>()
+                .ok()
+                .filter(|port| *port > 0)
+                .ok_or_else(|| "Port must be between 1 and 65535".to_string()),
         }
     }
 
@@ -422,5 +473,221 @@ impl AppService {
         let action = self.pending_action.clone();
         self.pending_action = Action::Continue;
         action
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::Rgb;
+    use std::cell::RefCell;
+
+    struct StubSshRepo {
+        stored: RefCell<Vec<SshHost>>,
+    }
+
+    impl StubSshRepo {
+        fn with(hosts: Vec<SshHost>) -> Self {
+            Self { stored: RefCell::new(hosts) }
+        }
+    }
+
+    impl SshRepository for StubSshRepo {
+        fn load_all(&self) -> (String, Vec<SshHost>) {
+            (String::new(), self.stored.borrow().clone())
+        }
+
+        fn save_all(&self, _preamble: &str, hosts: &[SshHost]) -> Result<PathBuf, String> {
+            *self.stored.borrow_mut() = hosts.to_vec();
+            Ok(PathBuf::from("/stub/config"))
+        }
+
+        fn config_path(&self) -> PathBuf {
+            PathBuf::from("/stub/config")
+        }
+    }
+
+    struct StubThemeRepo;
+
+    impl ThemeRepository for StubThemeRepo {
+        fn load_preference(&self) -> ThemePreference {
+            ThemePreference::default()
+        }
+
+        fn save_preference(&self, _preference: &ThemePreference) {}
+
+        fn catalog(&self) -> Vec<Theme> {
+            let c = || Rgb::new(0, 0, 0);
+            vec![Theme {
+                name: "stub".into(),
+                transparent: true,
+                bg: c(),
+                fg: c(),
+                accent: c(),
+                accent_secondary: c(),
+                border: c(),
+                border_focused: c(),
+                header_bg: c(),
+                header_fg: c(),
+                selected_bg: c(),
+                selected_fg: c(),
+                status_bar_bg: c(),
+                status_bar_fg: c(),
+                error: c(),
+                success: c(),
+                warning: c(),
+                muted: c(),
+                input_bg: c(),
+                input_fg: c(),
+                input_cursor: c(),
+            }]
+        }
+    }
+
+    fn host(alias: &str, port: u16) -> SshHost {
+        SshHost {
+            alias: alias.into(),
+            hostname: "example.com".into(),
+            port,
+            ..SshHost::empty()
+        }
+    }
+
+    fn app_with(hosts: Vec<SshHost>) -> (AppService, StubSshRepo) {
+        let ssh_repo = StubSshRepo::with(hosts);
+        let app = AppService::initialize(&ssh_repo, &StubThemeRepo);
+        (app, ssh_repo)
+    }
+
+    fn type_into(app: &mut AppService, field: FormField, text: &str) {
+        app.form_field = field;
+        for c in text.chars() {
+            app.form_type_char(c);
+        }
+    }
+
+    #[test]
+    fn typing_a_port_replaces_the_default_instead_of_appending() {
+        let (mut app, repo) = app_with(vec![]);
+
+        app.begin_add();
+        type_into(&mut app, FormField::Alias, "box");
+        type_into(&mut app, FormField::HostName, "10.0.0.5");
+        type_into(&mut app, FormField::Port, "2222");
+        app.commit_add(&repo);
+
+        assert_eq!(app.host_at(0).map(|h| h.port), Some(2222));
+    }
+
+    #[test]
+    fn port_field_can_be_cleared_and_retyped() {
+        let (mut app, repo) = app_with(vec![host("box", 2222)]);
+
+        app.begin_edit();
+        app.form_field = FormField::Port;
+        for _ in 0..4 {
+            app.form_delete_char();
+        }
+        assert_eq!(app.form_value(&FormField::Port), "");
+
+        for c in "8022".chars() {
+            app.form_type_char(c);
+        }
+        app.commit_edit(0, &repo);
+
+        assert_eq!(app.host_at(0).map(|h| h.port), Some(8022));
+    }
+
+    #[test]
+    fn an_empty_port_falls_back_to_22() {
+        let (mut app, repo) = app_with(vec![host("box", 2222)]);
+
+        app.begin_edit();
+        app.form_field = FormField::Port;
+        for _ in 0..4 {
+            app.form_delete_char();
+        }
+        app.commit_edit(0, &repo);
+
+        assert_eq!(app.host_at(0).map(|h| h.port), Some(22));
+    }
+
+    #[test]
+    fn an_out_of_range_port_is_rejected_instead_of_silently_reset() {
+        let (mut app, repo) = app_with(vec![]);
+
+        app.begin_add();
+        type_into(&mut app, FormField::Alias, "box");
+        type_into(&mut app, FormField::HostName, "10.0.0.5");
+        type_into(&mut app, FormField::Port, "999999");
+        app.commit_add(&repo);
+
+        assert_eq!(app.host_count(), 0);
+        assert_eq!(app.mode, Mode::AddHost);
+        assert!(app.notification.as_ref().is_some_and(|(_, is_error)| *is_error));
+    }
+
+    #[test]
+    fn editing_shows_the_current_port() {
+        let (mut app, _repo) = app_with(vec![host("box", 2222)]);
+
+        app.begin_edit();
+
+        assert_eq!(app.form_value(&FormField::Port), "2222");
+    }
+
+    #[test]
+    fn surrounding_whitespace_is_trimmed_before_saving() {
+        let (mut app, repo) = app_with(vec![]);
+
+        app.begin_add();
+        type_into(&mut app, FormField::Alias, "  box  ");
+        type_into(&mut app, FormField::HostName, " 10.0.0.5 ");
+        type_into(&mut app, FormField::User, " root ");
+        app.commit_add(&repo);
+
+        let saved = app.host_at(0).expect("host was saved");
+        assert_eq!(saved.alias, "box");
+        assert_eq!(saved.hostname, "10.0.0.5");
+        assert_eq!(saved.user, "root");
+    }
+
+    #[test]
+    fn an_alias_with_an_inner_space_is_rejected() {
+        let (mut app, repo) = app_with(vec![]);
+
+        app.begin_add();
+        type_into(&mut app, FormField::Alias, "my box");
+        type_into(&mut app, FormField::HostName, "10.0.0.5");
+        app.commit_add(&repo);
+
+        assert_eq!(app.host_count(), 0);
+        assert_eq!(app.mode, Mode::AddHost);
+    }
+
+    #[test]
+    fn a_whitespace_only_alias_is_rejected() {
+        let (mut app, repo) = app_with(vec![]);
+
+        app.begin_add();
+        type_into(&mut app, FormField::Alias, "   ");
+        type_into(&mut app, FormField::HostName, "10.0.0.5");
+        app.commit_add(&repo);
+
+        assert_eq!(app.host_count(), 0);
+        assert_eq!(app.mode, Mode::AddHost);
+    }
+
+    #[test]
+    fn a_duplicate_alias_is_rejected_after_trimming() {
+        let (mut app, repo) = app_with(vec![host("box", 22)]);
+
+        app.begin_add();
+        type_into(&mut app, FormField::Alias, " BOX ");
+        type_into(&mut app, FormField::HostName, "10.0.0.5");
+        app.commit_add(&repo);
+
+        assert_eq!(app.host_count(), 1);
+        assert_eq!(app.mode, Mode::AddHost);
     }
 }

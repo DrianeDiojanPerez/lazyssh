@@ -75,7 +75,7 @@ pub fn draw_form(frame: &mut Frame, app: &AppService, title: &str) {
         ]);
         frame.render_widget(Paragraph::new(label_line), rows[label_row]);
 
-        let value = read_field_display(&app.form_draft, field);
+        let value = app.form_value(field);
         let input_style = if is_active { t.input() } else { t.base() };
         let cursor = if is_active { "▎" } else { "" };
 
@@ -100,16 +100,6 @@ pub fn draw_form(frame: &mut Frame, app: &AppService, title: &str) {
         ]))
         .alignment(Alignment::Center);
         frame.render_widget(footer, rows[footer_row]);
-    }
-}
-
-fn read_field_display(host: &crate::models::SshHost, field: &FormField) -> String {
-    match field {
-        FormField::Alias => host.alias.clone(),
-        FormField::HostName => host.hostname.clone(),
-        FormField::Port => host.port.to_string(),
-        FormField::User => host.user.clone(),
-        FormField::IdentityFile => host.identity_file.clone(),
     }
 }
 
