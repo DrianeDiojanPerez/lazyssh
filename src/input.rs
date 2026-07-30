@@ -101,7 +101,7 @@ fn on_form(app: &mut AppService, key: KeyEvent, ssh_repo: &dyn SshRepository) {
         KeyCode::Enter => commit_form(app, ssh_repo),
 
         KeyCode::Backspace => app.form_delete_char(),
-        KeyCode::Char(c) => app.form_type_char(c),
+        KeyCode::Char(c) if !is_shortcut(key) => app.form_type_char(c),
 
         _ => {}
     }
@@ -146,6 +146,10 @@ fn on_help(app: &mut AppService, key: KeyEvent) {
         KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => app.cancel_mode(),
         _ => {}
     }
+}
+
+fn is_shortcut(key: KeyEvent) -> bool {
+    key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
 }
 
 fn is_quit_combo(key: KeyEvent) -> bool {
