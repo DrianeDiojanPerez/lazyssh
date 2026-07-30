@@ -63,6 +63,10 @@ impl FormField {
         }
     }
 
+    pub fn is_required(&self) -> bool {
+        matches!(self, Self::Alias | Self::HostName)
+    }
+
     pub fn accepts_char(&self, c: char) -> bool {
         match self {
             Self::Port => c.is_ascii_digit(),
