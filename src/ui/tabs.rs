@@ -30,8 +30,8 @@ fn layout(app: &AppService) -> Vec<(u16, String, usize)> {
         let label = format!(" {}{} {} ", mark, session.alias, CLOSE);
 
         placed.push((x, label.clone(), index));
-        // the borders on each side, then a gap before the next tab
-        x += label.chars().count() as u16 + 3;
+        // a space between one tab and the next
+        x += label.chars().count() as u16 + 1;
     }
 
     placed
@@ -49,7 +49,7 @@ pub fn tab_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<Tab
         .find(|(x, label, _)| column >= *x && column < x + width_of(label))
         .map(|(x, label, index)| {
             // the cross keeps the right hand end of the tab to itself
-            if column >= x + width_of(&label) - 3 {
+            if column >= x + width_of(&label) - 2 {
                 TabHit::Close(index)
             } else {
                 TabHit::Select(index)
@@ -58,7 +58,7 @@ pub fn tab_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<Tab
 }
 
 fn width_of(label: &str) -> u16 {
-    label.chars().count() as u16 + 2
+    label.chars().count() as u16
 }
 
 /// Tabs are cards of their own: the one you are looking at is filled in and
@@ -80,17 +80,15 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     for (_, label, index) in layout(app) {
         let is_active = app.active_tab == Some(index);
 
-        // INFO: both tabs are the same shape and only the fill tells them
-        // apart, so the bar does not jump about as tabs come and go
-        let (edge, fill) = match (is_active, app.focus) {
-            (true, Focus::Session) => (t.accent(), t.pill(&t.accent)),
-            (true, Focus::Sidebar) => (t.accent(), t.selected()),
-            _ => (t.border(), t.surface()),
+        // INFO: the fill is the whole of the difference, so a tab is a plain
+        // block of colour with nothing drawn around it
+        let fill = match (is_active, app.focus) {
+            (true, Focus::Session) => t.pill(&t.accent),
+            (true, Focus::Sidebar) => t.selected(),
+            _ => t.surface(),
         };
 
-        spans.push(Span::styled("│", edge));
         spans.push(Span::styled(label, fill));
-        spans.push(Span::styled("│", edge));
         spans.push(Span::raw(" "));
     }
 
