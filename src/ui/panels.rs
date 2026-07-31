@@ -136,9 +136,9 @@ pub struct Cards {
 pub fn cards(app: &AppService, area: Rect) -> Cards {
     let inner = list_block(app).inner(area);
 
-    // INFO: a card breathes better with a blank row after it, but on a short
-    // panel that row costs a whole host, so it is the first thing to go
-    let height = if inner.height >= 11 { 3 } else { 2 };
+    // a card is its own little box: a titled top edge, a line of detail and
+    // the bottom edge
+    let height = 3;
     let visible = (inner.height / height).max(1) as usize;
 
     Cards {
@@ -186,31 +186,20 @@ pub fn draw_host_list(frame: &mut Frame, app: &AppService, area: Rect) {
     }
 
     let layout = cards(app, area);
-    // INFO: the right hand column is only worth its width when some host
-    // actually has a custom port or a key to show there, and it carries its
-    // own two space gutter so nothing collides
-    let meta = if inner.width >= 34 { meta_width(&entries) } else { 0 };
-    let meta_column = if meta > 0 { meta + 2 } else { 0 };
-    let text_width = inner.width.saturating_sub(meta_column + 2) as usize;
 
     let rows: Vec<Row> = entries
         .iter()
         .enumerate()
-        .map(|(row, (_, host))| card(app, row == app.cursor, host, text_width, layout.height))
-        .map(|cells| Row::new(cells).height(layout.height))
+        .map(|(row, (_, host))| card(app, row == app.cursor, host, inner.width as usize))
+        .map(|lines| Row::new(vec![Cell::from(Text::from(lines))]).height(layout.height))
         .collect();
-
-    let widths = [Constraint::Min(10), Constraint::Length(meta_column)];
 
     // INFO: TableState owns the scroll offset, which is what keeps the
     // selected host on screen once the list is taller than the panel
     let mut state = TableState::default().with_selected(Some(app.cursor));
 
     frame.render_stateful_widget(
-        Table::new(rows, widths).block(block).column_spacing(0).highlight_symbol(Text::from(vec![
-            Line::from(Span::styled("┃ ", t.accent())),
-            Line::from(Span::styled("┃ ", t.accent())),
-        ])),
+        Table::new(rows, [Constraint::Percentage(100)]).block(block).column_spacing(0),
         area,
         &mut state,
     );
@@ -228,20 +217,6 @@ pub fn draw_host_list(frame: &mut Frame, app: &AppService, area: Rect) {
     }
 }
 
-fn meta_width(entries: &[(usize, &SshHost)]) -> u16 {
-    let widest = entries
-        .iter()
-        .map(|(_, host)| {
-            let port = if host.has_custom_port() { host.port.to_string().len() + 3 } else { 0 };
-            let key = key_name(host).chars().count();
-            port.max(key)
-        })
-        .max()
-        .unwrap_or(0);
-
-    (widest as u16).min(14)
-}
-
 fn key_name(host: &SshHost) -> &str {
     if !host.has_identity_file() {
         return "";
@@ -249,22 +224,25 @@ fn key_name(host: &SshHost) -> &str {
     host.identity_file.rsplit('/').next().unwrap_or("")
 }
 
-/// One host as a two line card: what you type to connect, then where it
-/// actually goes, with the details worth scanning pushed to the right.
-fn card<'a>(
-    app: &AppService,
-    is_selected: bool,
-    host: &SshHost,
-    text_width: usize,
-    height: u16,
-) -> Vec<Cell<'a>> {
+/// One host drawn as its own card: the alias sits in the top edge the way a
+/// panel title does, and the line below carries where it goes and what it
+/// takes to get there.
+fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -> Vec<Line<'a>> {
     let t = &app.theme;
 
-    let alias_style = if is_selected {
-        t.bold_accent()
+    // INFO: the selected card is drawn in heavy box glyphs as well as in the
+    // accent colour, so it still stands out where colour does not carry
+    let (edge, title_style, glyphs) = if is_selected {
+        (t.accent(), t.bold_accent(), ["┏━ ", "━", "┓", "┃ ", " ┃", "┗", "┛"])
     } else {
-        t.base().add_modifier(Modifier::BOLD)
+        (t.border(), t.base().add_modifier(Modifier::BOLD), ["╭─ ", "─", "╮", "│ ", " │", "╰", "╯"])
     };
+
+    // "│ " on the left and " │" on the right leave this much for the detail
+    let room = width.saturating_sub(4);
+
+    let alias = ellipsize(&host.alias, room);
+    let dashes = width.saturating_sub(alias.chars().count() + 5);
 
     let target = if host.user.is_empty() {
         host.display_host().to_string()
@@ -272,34 +250,46 @@ fn card<'a>(
         format!("{}@{}", host.user, host.display_host())
     };
 
-    // INFO: the blank row belongs to the card rather than to a row margin, so
-    // that every card is exactly as tall as the hit testing believes it is
-    let mut text = vec![
-        Line::from(Span::styled(ellipsize(&host.alias, text_width), alias_style)),
-        Line::from(Span::styled(ellipsize(&target, text_width), t.muted())),
+    let key = key_name(host).to_string();
+    let port = host.has_custom_port().then(|| format!(" :{} ", host.port));
+
+    let meta = key.chars().count()
+        + port.as_ref().map_or(0, |p| p.chars().count())
+        + usize::from(!key.is_empty() && port.is_some());
+
+    let target = ellipsize(&target, room.saturating_sub(meta + usize::from(meta > 0)));
+    let gap = room.saturating_sub(target.chars().count() + meta);
+
+    let mut detail = vec![
+        Span::styled(glyphs[3], edge),
+        Span::styled(target, t.muted()),
+        Span::raw(" ".repeat(gap)),
     ];
-    text.resize(height as usize, Line::from(""));
-    let text = Text::from(text);
-
-    let mut meta: Vec<Line> = Vec::new();
-    let port = if host.has_custom_port() {
-        Line::from(Span::styled(format!(" :{} ", host.port), t.pill(&t.accent_secondary)))
-    } else {
-        Line::from("")
-    };
-
-    meta.push(port);
-    meta.push(Line::from(Span::styled(key_name(host).to_string(), t.muted())));
-    meta.resize(height as usize, Line::from(""));
+    if !key.is_empty() {
+        detail.push(Span::styled(key, t.muted()));
+        if port.is_some() {
+            detail.push(Span::raw(" "));
+        }
+    }
+    if let Some(port) = port {
+        detail.push(Span::styled(port, t.pill(&t.accent_secondary)));
+    }
+    detail.push(Span::styled(glyphs[4], edge));
 
     vec![
-        Cell::from(text),
-        Cell::from(Text::from(meta).alignment(Alignment::Right)),
+        Line::from(vec![
+            Span::styled(glyphs[0], edge),
+            Span::styled(alias, title_style),
+            Span::styled(format!(" {}{}", glyphs[1].repeat(dashes), glyphs[2]), edge),
+        ]),
+        Line::from(detail),
+        Line::from(Span::styled(
+            format!("{}{}{}", glyphs[5], glyphs[1].repeat(width.saturating_sub(2)), glyphs[6]),
+            edge,
+        )),
     ]
 }
 
-/// An empty panel says what is missing and what to press, centred so it reads
-/// as a deliberate state rather than as a panel that failed to draw.
 fn draw_placeholder(frame: &mut Frame, app: &AppService, block: Block, area: Rect, headline: &str, hint: &str) {
     let t = &app.theme;
     let inner = block.inner(area);
