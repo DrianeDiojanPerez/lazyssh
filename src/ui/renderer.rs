@@ -90,6 +90,7 @@ pub fn render(frame: &mut Frame, app: &AppService) {
 mod tests {
     use std::time::Duration;
 
+    use crossterm::event::KeyCode;
     use ratatui::layout::Rect;
 
     use crate::models::Toast;
@@ -192,6 +193,123 @@ mod tests {
 
         assert!(filtered.contains("work_ed255"), "the match is missing:\n{}", filtered);
         assert!(!filtered.contains("id_rsa"), "the menu should have narrowed:\n{}", filtered);
+    }
+
+    /// The column a piece of text starts at on screen, which is what the mouse
+    /// would report if it were clicked.
+    fn column_of(screen: &str, row: u16, needle: &str) -> u16 {
+        let line = screen.lines().nth(row as usize).expect("row is off screen");
+        let at = line
+            .find(needle)
+            .unwrap_or_else(|| panic!("'{}' is not on row {}:\n{}", needle, row, screen));
+
+        line[..at].chars().count() as u16
+    }
+
+    fn row_of(screen: &str, needle: &str) -> u16 {
+        screen
+            .lines()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("'{}' is nowhere on screen:\n{}", needle, screen)) as u16
+    }
+
+    #[test]
+    fn the_status_bar_hints_are_buttons() {
+        let (app, _repo) = app_with(hosts(3));
+        let frames = super::frames(Rect::new(0, 0, 80, 24), false);
+        let screen = screenshot::draw(&app, 80, 24);
+        let bar = frames.status.y;
+
+        for (hint, code) in [
+            ("a add", KeyCode::Char('a')),
+            ("d delete", KeyCode::Char('d')),
+            ("? help", KeyCode::Char('?')),
+        ] {
+            let column = column_of(&screen, bar, hint);
+            assert_eq!(
+                crate::ui::panels::hint_at(&app, frames.status, column, bar),
+                Some(code),
+                "clicking '{}' should press its key:\n{}",
+                hint,
+                screen
+            );
+        }
+    }
+
+    #[test]
+    fn the_form_answers_to_clicks_on_its_fields_and_buttons() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.begin_add();
+
+        let body = super::frames(Rect::new(0, 0, 80, 24), false).body;
+        let screen = screenshot::draw(&app, 80, 24);
+
+        let row = row_of(&screen, "Port  default 22");
+        let column = column_of(&screen, row, "Port");
+        assert_eq!(
+            crate::ui::popups::field_at(&app, body, column, row),
+            Some(crate::models::FormField::Port),
+            "clicking the Port row should focus it:\n{}",
+            screen
+        );
+
+        let row = row_of(&screen, " Save ");
+        assert_eq!(
+            crate::ui::popups::form_button_at(&app, body, column_of(&screen, row, " Save ") + 1, row),
+            Some(crate::ui::popups::FormButton::Save),
+            "the Save button is not where it is drawn:\n{}",
+            screen
+        );
+        assert_eq!(
+            crate::ui::popups::form_button_at(&app, body, column_of(&screen, row, " Cancel ") + 1, row),
+            Some(crate::ui::popups::FormButton::Cancel),
+            "the Cancel button is not where it is drawn:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn the_delete_popup_answers_to_clicks_on_its_buttons() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.begin_delete();
+
+        let body = super::frames(Rect::new(0, 0, 80, 24), false).body;
+        let screen = screenshot::draw(&app, 80, 24);
+        // the title says "Delete host" too, so the buttons are found by the
+        // one word that only appears on their row
+        let row = row_of(&screen, " Keep ");
+
+        assert_eq!(
+            crate::ui::popups::delete_button_at(body, column_of(&screen, row, " Delete ") + 1, row),
+            Some(crate::ui::popups::DeleteButton::Delete),
+            "the Delete button is not where it is drawn:\n{}",
+            screen
+        );
+        assert_eq!(
+            crate::ui::popups::delete_button_at(body, column_of(&screen, row, " Keep ") + 1, row),
+            Some(crate::ui::popups::DeleteButton::Keep),
+            "the Keep button is not where it is drawn:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn the_key_menu_answers_to_a_click() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.begin_add();
+        app.form_field = crate::models::FormField::IdentityFile;
+
+        let body = super::frames(Rect::new(0, 0, 80, 24), false).body;
+        let screen = screenshot::draw(&app, 80, 24);
+        let row = row_of(&screen, "~/.ssh/id_rsa");
+        let column = column_of(&screen, row, "~/.ssh/id_rsa");
+
+        assert_eq!(
+            crate::ui::popups::suggestion_at(&app, body, column, row),
+            Some(1),
+            "clicking a key should pick that key:\n{}",
+            screen
+        );
     }
 
     #[test]

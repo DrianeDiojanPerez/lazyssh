@@ -1,3 +1,4 @@
+use crossterm::event::KeyCode;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Modifier, Style},
@@ -418,30 +419,57 @@ pub fn draw_status_bar(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
 
     let mut spans = vec![mode_chip(app), Span::styled("  ", t.status_bar())];
-    let mut used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
 
-    let separator = Span::styled(" · ", t.border());
-    // INFO: the way out of any mode is worth more than the rest of the hints,
-    // so its width is reserved before the others are laid out
-    let escape = escape_hint(&app.mode);
-    let reserved = escape.0.chars().count() + escape.1.chars().count() + 4;
-
-    for (key, label) in hints_for(&app.mode) {
-        let width = key.chars().count() + label.chars().count() + 4;
-        if used + width + reserved > area.width as usize {
-            break;
-        }
-        used += width;
-
-        spans.push(Span::styled(*key, t.bold_accent()));
+    for (_, _, key, label, _) in hint_layout(app, area.width) {
+        spans.push(Span::styled(key, t.bold_accent()));
         spans.push(Span::styled(format!(" {}", label), t.muted()));
-        spans.push(separator.clone());
+        spans.push(Span::styled(" · ", t.border()));
     }
-
-    spans.push(Span::styled(escape.0, t.bold_accent()));
-    spans.push(Span::styled(format!(" {}", escape.1), t.muted()));
+    spans.pop();
 
     frame.render_widget(Paragraph::new(Line::from(spans)).style(t.status_bar()), area);
+}
+
+/// The hint under a point, as the key that would have done the same thing.
+pub fn hint_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<KeyCode> {
+    if row != area.y {
+        return None;
+    }
+
+    hint_layout(app, area.width)
+        .into_iter()
+        .find(|(x, width, _, _, _)| column >= *x && column < x + width)
+        .map(|(_, _, _, _, code)| code)
+}
+
+/// Lays the hints out left to right, dropping the ones that will not fit. The
+/// renderer and the mouse both read this, so a click always lands on the hint
+/// that is actually printed there.
+fn hint_layout(
+    app: &AppService,
+    width: u16,
+) -> Vec<(u16, u16, &'static str, &'static str, KeyCode)> {
+    let mut placed = Vec::new();
+    let mut x: u16 = mode_chip(app).content.chars().count() as u16 + 2;
+
+    // INFO: the way out of the current mode is worth more than the rest, so
+    // its width is reserved before the others are laid out
+    let escape = escape_hint(&app.mode);
+    let reserved = escape.0.chars().count() as u16 + escape.1.chars().count() as u16 + 4;
+
+    for (key, label, code) in hints_for(&app.mode) {
+        let span = key.chars().count() as u16 + label.chars().count() as u16 + 1;
+        if x + span + 3 + reserved > width {
+            break;
+        }
+
+        placed.push((x, span, *key, *label, *code));
+        x += span + 3;
+    }
+
+    let span = escape.0.chars().count() as u16 + escape.1.chars().count() as u16 + 1;
+    placed.push((x, span, escape.0, escape.1, escape.2));
+    placed
 }
 
 fn mode_chip<'a>(app: &AppService) -> Span<'a> {
@@ -459,45 +487,48 @@ fn mode_chip<'a>(app: &AppService) -> Span<'a> {
 }
 
 /// The one hint that always stays visible: how to leave the current mode.
-fn escape_hint(mode: &Mode) -> (&'static str, &'static str) {
+fn escape_hint(mode: &Mode) -> (&'static str, &'static str, KeyCode) {
     match mode {
-        Mode::Normal => ("?", "help"),
-        Mode::Search => ("Esc", "clear"),
-        Mode::AddHost | Mode::EditHost(_) => ("Esc", "cancel"),
-        Mode::ConfirmDelete(_) => ("Esc", "keep"),
-        Mode::SelectTheme | Mode::Help => ("Esc", "close"),
+        Mode::Normal => ("?", "help", KeyCode::Char('?')),
+        Mode::Search => ("Esc", "clear", KeyCode::Esc),
+        Mode::AddHost | Mode::EditHost(_) => ("Esc", "cancel", KeyCode::Esc),
+        Mode::ConfirmDelete(_) => ("Esc", "keep", KeyCode::Esc),
+        Mode::SelectTheme | Mode::Help => ("Esc", "close", KeyCode::Esc),
     }
 }
 
 /// The hints that matter in the current mode, most useful first, so the
 /// status bar degrades sensibly on a narrow terminal.
-fn hints_for(mode: &Mode) -> &'static [(&'static str, &'static str)] {
+fn hints_for(mode: &Mode) -> &'static [(&'static str, &'static str, KeyCode)] {
     match mode {
         Mode::Normal => &[
-            ("↵", "connect"),
-            ("a", "add"),
-            ("e", "edit"),
-            ("d", "delete"),
-            ("/", "search"),
-            ("q", "quit"),
-            ("↑↓", "move"),
-            ("c", "command"),
-            ("r", "reload"),
-            ("t", "theme"),
-            ("T", "transparency"),
+            ("↵", "connect", KeyCode::Enter),
+            ("a", "add", KeyCode::Char('a')),
+            ("e", "edit", KeyCode::Char('e')),
+            ("d", "delete", KeyCode::Char('d')),
+            ("/", "search", KeyCode::Char('/')),
+            ("q", "quit", KeyCode::Char('q')),
+            ("↑↓", "move", KeyCode::Null),
+            ("c", "command", KeyCode::Char('c')),
+            ("r", "reload", KeyCode::Char('r')),
+            ("t", "theme", KeyCode::Char('t')),
+            ("T", "transparency", KeyCode::Char('T')),
         ],
         Mode::Search => &[
-            ("type", "to filter"),
-            ("↵", "keep filter"),
-            ("↑↓", "move"),
+            ("type", "to filter", KeyCode::Null),
+            ("↵", "keep filter", KeyCode::Enter),
+            ("↑↓", "move", KeyCode::Null),
         ],
         Mode::AddHost | Mode::EditHost(_) => &[
-            ("Tab", "next field"),
-            ("S-Tab", "previous"),
-            ("↵", "save"),
+            ("Tab", "next field", KeyCode::Tab),
+            ("S-Tab", "previous", KeyCode::BackTab),
+            ("↵", "save", KeyCode::Enter),
         ],
-        Mode::ConfirmDelete(_) => &[("y", "delete")],
-        Mode::SelectTheme => &[("↑↓", "browse"), ("↵", "apply")],
+        Mode::ConfirmDelete(_) => &[("y", "delete", KeyCode::Char('y'))],
+        Mode::SelectTheme => &[
+            ("↑↓", "browse", KeyCode::Null),
+            ("↵", "apply", KeyCode::Enter),
+        ],
         Mode::Help => &[],
     }
 }
