@@ -436,22 +436,28 @@ mod tests {
         assert_eq!(before.list, after.list, "the host list should not have moved");
         assert_eq!(before.main, after.main, "the main pane should not have moved");
         assert!(
-            screenshot::draw(&app, 100, 20).contains("no open connections") == false,
+            screenshot::draw(&app, 100, 20).contains("server-01"),
             "the row should be showing the tab now"
         );
     }
 
     #[test]
-    fn the_tab_row_says_what_it_is_for_while_it_is_empty() {
-        let (app, _repo) = app_with(hosts(3));
-
-        let screen = screenshot::draw(&app, 100, 20);
+    fn the_tab_row_is_labelled_whether_or_not_anything_is_open() {
+        let (mut app, _repo) = app_with(hosts(3));
 
         assert!(
-            screen.contains("no open connections"),
-            "the empty tab row says nothing:\n{}",
-            screen
+            screenshot::draw(&app, 100, 20).contains("tabs"),
+            "the empty row has lost its label"
         );
+
+        app.sessions.push(
+            crate::services::Session::spawn("server-01", "true", &[], 20, 40)
+                .expect("the pty should have started"),
+        );
+        let screen = screenshot::draw(&app, 100, 20);
+
+        assert!(screen.contains("tabs"), "the label should stay:\n{}", screen);
+        assert!(screen.contains("server-01"), "the tab is missing:\n{}", screen);
     }
 
     #[test]

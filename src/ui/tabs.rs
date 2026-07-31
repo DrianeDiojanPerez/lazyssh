@@ -14,6 +14,13 @@ const CLOSE: &str = "×";
 const LEFT_CAP: &str = "\u{e0b6}";
 const RIGHT_CAP: &str = "\u{e0b4}";
 
+/// The label the row opens with, in the same shape as the tabs beside it.
+const BADGE: &str = " tabs ";
+
+fn badge_width() -> u16 {
+    BADGE.chars().count() as u16 + 3
+}
+
 /// What a click on the tab bar meant.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TabHit {
@@ -25,7 +32,7 @@ pub enum TabHit {
 /// the mouse both read this, so a tab is always where it was drawn.
 fn layout(app: &AppService) -> Vec<(u16, String, usize)> {
     let mut placed = Vec::new();
-    let mut x = 1;
+    let mut x = 1 + badge_width();
 
     for (index, session) in app.sessions.iter().enumerate() {
         // a session that has ended keeps its tab until it is closed, so the
@@ -67,38 +74,43 @@ fn width_of(label: &str) -> u16 {
 
 /// Tabs are cards of their own: the one you are looking at is filled in and
 /// the rest are outlined, the same way the buttons in the popups are.
+/// Tabs are pills of their own: the one you are looking at is filled in and
+/// the rest sit back, with the row labelled in the same shape.
 pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
-
-    if app.sessions.is_empty() {
-        // the row stays put and says what would fill it
-        let empty = Line::from(Span::styled("  no open connections", t.muted()));
-
-
-        frame.render_widget(Paragraph::new(empty).style(t.base()), area);
-        return;
-    }
-
     let mut spans = vec![Span::raw(" ")];
+
+    spans.extend(pill(BADGE, t.accent_secondary.to_color(), t.pill(&t.accent_secondary), t));
 
     for (_, label, index) in layout(app) {
         let is_active = app.active_tab == Some(index);
 
-        // INFO: the caps are drawn in the colour the tab is filled with, on
-        // the page behind it, which is what rounds the ends off
         let (colour, fill) = match (is_active, app.focus) {
             (true, Focus::Session) => (t.accent.to_color(), t.pill(&t.accent)),
             (true, Focus::Sidebar) => (t.selected_bg.to_color(), t.selected()),
             _ => (t.input_bg.to_color(), t.surface()),
         };
 
-        let cap = t.base().fg(colour);
-
-        spans.push(Span::styled(LEFT_CAP, cap));
-        spans.push(Span::styled(label, fill));
-        spans.push(Span::styled(RIGHT_CAP, cap));
-        spans.push(Span::raw(" "));
+        spans.extend(pill(&label, colour, fill, t));
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)).style(t.base()), area);
+}
+
+/// A label with both ends rounded off. The caps are drawn in the colour the
+/// pill is filled with, on the page behind it, which is what rounds them.
+fn pill<'a>(
+    label: &str,
+    colour: ratatui::style::Color,
+    fill: ratatui::style::Style,
+    t: &crate::models::Theme,
+) -> Vec<Span<'a>> {
+    let cap = t.base().fg(colour);
+
+    vec![
+        Span::styled(LEFT_CAP, cap),
+        Span::styled(label.to_string(), fill),
+        Span::styled(RIGHT_CAP, cap),
+        Span::raw(" "),
+    ]
 }
