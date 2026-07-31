@@ -9,6 +9,7 @@ use crate::services::AppService;
 
 use super::panels;
 use super::popups;
+use super::toasts;
 
 pub fn render(frame: &mut Frame, app: &AppService) {
     let area = frame.size();
@@ -29,6 +30,7 @@ pub fn render(frame: &mut Frame, app: &AppService) {
     panels::draw_status_bar(frame, app, main_layout[2]);
 
     let body = main_layout[1];
+    toasts::draw(frame, app, body);
     match &app.mode {
         Mode::AddHost => popups::draw_form(frame, app, " Add host ", body),
         Mode::EditHost(_) => popups::draw_form(frame, app, " Edit host ", body),
@@ -71,11 +73,49 @@ fn draw_body(frame: &mut Frame, app: &AppService, area: ratatui::layout::Rect) {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use crate::models::Toast;
     use crate::test_support::{app_with, host};
     use crate::ui::screenshot;
 
     fn hosts(count: usize) -> Vec<crate::models::SshHost> {
         (1..=count).map(|i| host(&format!("server-{:02}", i), 22)).collect()
+    }
+
+    #[test]
+    fn a_toast_opens_out_of_the_top_right_corner() {
+        let (mut app, _repo) = app_with(hosts(4));
+        app.toasts.push(Toast::success("Added 'prod-web'"));
+        app.advance_toasts(Duration::from_millis(40));
+
+        let sliding = screenshot::draw(&app, 80, 18);
+        assert!(
+            !sliding.contains("Added 'prod-web'"),
+            "the toast arrived at full width instead of opening:\n{}",
+            sliding
+        );
+
+        app.advance_toasts(Duration::from_millis(200));
+        let open = screenshot::draw(&app, 80, 18);
+        let row = open
+            .lines()
+            .find(|line| line.contains("✔"))
+            .unwrap_or_else(|| panic!("the toast never opened:\n{}", open));
+
+        assert!(row.contains("Added 'prod-web'"), "the message is cut off:\n{}", open);
+        assert!(row.ends_with('│'), "the toast is not against the right edge:\n{}", open);
+    }
+
+    #[test]
+    fn a_toast_leaves_without_anyone_pressing_a_key() {
+        let (mut app, _repo) = app_with(hosts(4));
+        app.toasts.push(Toast::success("Added 'prod-web'"));
+
+        app.advance_toasts(Duration::from_secs(4));
+
+        assert!(!app.has_toasts(), "the toast outstayed its lifetime");
+        assert!(!screenshot::draw(&app, 80, 18).contains("Added"));
     }
 
     #[test]

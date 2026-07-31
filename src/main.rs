@@ -8,6 +8,7 @@ mod ui;
 
 use std::io;
 use std::process::Command;
+use std::time::Instant;
 
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
@@ -71,9 +72,22 @@ fn run_tui_until_action(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
+    let mut last_frame = Instant::now();
+
     let action = loop {
         terminal.draw(|frame| ui::render(frame, app))?;
+
+        // INFO: toasts age by however long the frame took, but only while some
+        // were already on screen: with none, the loop sits in a blocking read
+        // and that whole wait would otherwise expire the toast it wakes up for
+        let animating = app.has_toasts();
         input::handle_next_event(app, ssh_repo, theme_repo)?;
+
+        let now = Instant::now();
+        if animating {
+            app.advance_toasts(now.duration_since(last_frame));
+        }
+        last_frame = now;
 
         let action = app.take_action();
         match action {

@@ -1,6 +1,7 @@
 pub mod panels;
 pub mod popups;
 pub mod renderer;
+pub mod toasts;
 
 pub use renderer::render;
 
