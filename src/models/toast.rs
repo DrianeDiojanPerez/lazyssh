@@ -12,6 +12,15 @@ pub enum ToastKind {
     Error,
 }
 
+impl ToastKind {
+    pub fn title(&self) -> &'static str {
+        match self {
+            Self::Success => "Success",
+            Self::Error => "Error",
+        }
+    }
+}
+
 /// A message that shows itself in the top right corner and leaves on its own.
 /// It carries its own age rather than a timestamp, so the render loop decides
 /// how time passes and the tests can hand it any amount they like.
