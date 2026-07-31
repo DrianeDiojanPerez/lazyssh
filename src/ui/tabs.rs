@@ -29,15 +29,16 @@ fn layout(app: &AppService) -> Vec<(u16, String, usize)> {
         let mark = if session.is_running() { "" } else { "·" };
         let label = format!(" {}{} {} ", mark, session.alias, CLOSE);
 
-        x += label.chars().count() as u16;
-        placed.push((x - label.chars().count() as u16, label, index));
+        placed.push((x, label.clone(), index));
+        // the borders on each side, then a gap before the next tab
+        x += label.chars().count() as u16 + 3;
     }
 
     placed
 }
 
 pub fn tab_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<TabHit> {
-    if row != area.y {
+    if row < area.y || row >= area.bottom() {
         return None;
     }
 
@@ -45,12 +46,10 @@ pub fn tab_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<Tab
 
     layout(app)
         .into_iter()
-        .find(|(x, label, _)| {
-            column >= *x && column < x + label.chars().count() as u16
-        })
+        .find(|(x, label, _)| column >= *x && column < x + width_of(label))
         .map(|(x, label, index)| {
-            // the cross sits one column in from the right hand end
-            if column >= x + label.chars().count() as u16 - 2 {
+            // the cross keeps the right hand end of the tab to itself
+            if column >= x + width_of(&label) - 3 {
                 TabHit::Close(index)
             } else {
                 TabHit::Select(index)
@@ -58,30 +57,53 @@ pub fn tab_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<Tab
         })
 }
 
+fn width_of(label: &str) -> u16 {
+    label.chars().count() as u16 + 2
+}
+
+/// Tabs are cards of their own: the one you are looking at is filled in and
+/// the rest are outlined, the same way the buttons in the popups are.
 pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
 
     if app.sessions.is_empty() {
         // the row stays put and says what would fill it
-        let empty = Line::from(Span::styled("  no open connections", t.muted()));
+        let empty = vec![
+            Line::from(""),
+            Line::from(Span::styled("  no open connections", t.muted())),
+        ];
+
 
         frame.render_widget(Paragraph::new(empty).style(t.base()), area);
         return;
     }
 
-    let mut spans = vec![Span::styled(" ", t.base())];
+    // INFO: a tab has no bottom edge, so it runs into the pane below it the
+    // way a tab should
+    let mut top = vec![Span::raw(" ")];
+    let mut middle = vec![Span::raw(" ")];
 
     for (_, label, index) in layout(app) {
         let is_active = app.active_tab == Some(index);
 
-        let style = match (is_active, app.focus) {
-            (true, Focus::Session) => t.pill(&t.accent),
-            (true, Focus::Sidebar) => t.selected(),
-            _ => t.muted(),
+        let (edge, fill) = match (is_active, app.focus) {
+            (true, Focus::Session) => (t.accent(), t.pill(&t.accent)),
+            (true, Focus::Sidebar) => (t.accent(), t.selected()),
+            _ => (t.border(), t.muted()),
         };
 
-        spans.push(Span::styled(label, style));
+        let dashes = "─".repeat(label.chars().count());
+
+        top.push(Span::styled(format!("╭{}╮", dashes), edge));
+        middle.push(Span::styled("│", edge));
+        middle.push(Span::styled(label, fill));
+        middle.push(Span::styled("│", edge));
+
+        for row in [&mut top, &mut middle] {
+            row.push(Span::raw(" "));
+        }
     }
 
-    frame.render_widget(Paragraph::new(Line::from(spans)).style(t.base()), area);
+    let lines = vec![Line::from(top), Line::from(middle)];
+    frame.render_widget(Paragraph::new(lines).style(t.base()), area);
 }

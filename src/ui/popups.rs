@@ -39,18 +39,21 @@ const CANCEL: &str = " Cancel ";
 pub fn form_layout(app: &AppService, body: Rect) -> FormLayout {
     let fields = FormField::all();
 
-    // two rows per field, a blank row between them, plus the footer block
-    let content_height =
-        (fields.len() * 3) as u16 + BUTTON_HEIGHT + u16::from(app.form_error.is_some());
+    // a label and an input for each field, then a blank line and the buttons
+    let content_height = (fields.len() * 2) as u16
+        + 1
+        + BUTTON_HEIGHT
+        + u16::from(app.form_error.is_some());
     let area = centered(58, content_height + 3, body);
     let inner = form_block("").inner(area);
 
     // INFO: on a terminal too short for the whole form, scroll just enough to
     // keep the field being edited on screen
-    let active_row = fields.iter().position(|f| *f == app.form_field).unwrap_or(0) * 3 + 2;
+    let active_row = fields.iter().position(|f| *f == app.form_field).unwrap_or(0) * 2 + 2;
     let scroll = active_row.saturating_sub(inner.height as usize) as u16;
 
-    let footer = inner.y + (fields.len() * 3) as u16
+    let footer = inner.y + (fields.len() * 2) as u16
+        + 1
         + u16::from(app.form_error.is_some())
         - scroll;
     let buttons = button_width(SAVE) + button_width(CANCEL) + 2;
@@ -83,7 +86,7 @@ pub fn field_at(app: &AppService, body: Rect, column: u16, row: u16) -> Option<F
     }
 
     let offset = row.checked_sub(layout.inner.y)? + layout.scroll;
-    FormField::all().get(offset as usize / 3).cloned()
+    FormField::all().get(offset as usize / 2).cloned()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -195,12 +198,12 @@ pub fn draw_form(frame: &mut Frame, app: &AppService, title: &str, body: Rect) {
             format!("{:<width$}", format!("  {}{}", value, cursor), width = width),
             input_style,
         )));
-        lines.push(Line::from(""));
     }
 
     if let Some(message) = app.form_error.as_ref() {
         lines.push(Line::from(Span::styled(format!("  {}", message), t.bold_error())));
     }
+    lines.push(Line::from(""));
 
     let hint = if app.is_completing() {
         "  ↑↓ pick a key   Enter use it"
@@ -246,7 +249,7 @@ pub fn completion_rect(app: &AppService, body: Rect) -> Option<Rect> {
     let height = (matches.len() as u16 + 2).min(7);
 
     let row = FormField::all().iter().position(|f| *f == app.form_field).unwrap_or(0);
-    let field = layout.inner.y + (row * 3 + 1) as u16 - layout.scroll;
+    let field = layout.inner.y + (row * 2 + 1) as u16 - layout.scroll;
 
     // INFO: the menu never covers the field it belongs to, so it drops below
     // when there is room, sits above the label when there is not, and stays
