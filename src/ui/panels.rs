@@ -1,7 +1,7 @@
 use ratatui::{
-    layout::{Alignment, Constraint, Margin, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Modifier, Style},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{
         Block, BorderType, Borders, Cell, Padding, Paragraph, Row, Scrollbar,
         ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
@@ -9,7 +9,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::models::Mode;
+use crate::models::{Mode, SshHost};
 use crate::services::AppService;
 
 pub fn draw_header(frame: &mut Frame, app: &AppService, area: Rect) {
@@ -17,22 +17,61 @@ pub fn draw_header(frame: &mut Frame, app: &AppService, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::BOTTOM)
-        .border_type(BorderType::Thick)
-        .border_style(t.accent())
-        .style(t.header());
+        .border_style(t.border())
+        .style(t.base());
 
-    let transparency_badge = if t.transparent { " [T]" } else { "" };
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    let line = Line::from(vec![
-        Span::styled(" lazyssh ", Style::default().fg(t.accent.to_color()).add_modifier(Modifier::BOLD)),
-        Span::styled(format!("v{}", env!("CARGO_PKG_VERSION")), t.muted()),
-        Span::styled("   ", t.muted()),
-        Span::styled(app.config_path_display(), t.accent_secondary()),
-        Span::styled(format!("   {} hosts", app.host_count()), t.muted()),
-        Span::styled(format!("   {}{}", t.name, transparency_badge), t.muted()),
+    let brand = Line::from(vec![
+        Span::styled(" lazyssh ", t.pill(&t.accent)),
+        Span::styled(format!(" v{}", env!("CARGO_PKG_VERSION")), t.muted()),
     ]);
 
-    frame.render_widget(Paragraph::new(line).block(block), area);
+    let transparency_badge = if t.transparent { " [T]" } else { "" };
+    let meta = [
+        (app.config_path_display(), t.accent_secondary()),
+        (format!("{} hosts", app.host_count()), t.muted()),
+        (format!("{}{}", t.name, transparency_badge), t.muted()),
+    ];
+
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(brand.width() as u16), Constraint::Min(0)])
+        .split(inner);
+
+    frame.render_widget(Paragraph::new(brand), columns[0]);
+    frame.render_widget(
+        Paragraph::new(join_while_it_fits(&meta, t.border(), columns[1].width).alignment(Alignment::Right)),
+        columns[1],
+    );
+}
+
+/// Joins segments with a dot until the next one would not fit, so the widest
+/// terminal shows everything and a narrow one keeps what comes first.
+fn join_while_it_fits<'a>(
+    segments: &[(String, Style)],
+    separator_style: Style,
+    width: u16,
+) -> Line<'a> {
+    let mut spans: Vec<Span> = Vec::new();
+    let mut used = 1;
+
+    for (text, style) in segments {
+        let separator = if spans.is_empty() { 0 } else { 3 };
+        if used + separator + text.chars().count() > width as usize {
+            break;
+        }
+        used += separator + text.chars().count();
+
+        if separator > 0 {
+            spans.push(Span::styled(" · ", separator_style));
+        }
+        spans.push(Span::styled(text.clone(), *style));
+    }
+
+    spans.push(Span::styled(" ", separator_style));
+    Line::from(spans)
 }
 
 pub fn draw_search_bar(frame: &mut Frame, app: &AppService, area: Rect) {
@@ -42,14 +81,23 @@ pub fn draw_search_bar(frame: &mut Frame, app: &AppService, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(t.border_focused())
-        .title(Span::styled(" Search ", t.accent()))
-        .style(t.input());
+        .title(Span::styled(" Filter ", t.title()))
+        .padding(Padding::new(1, 1, 0, 0))
+        .style(t.base());
 
-    let line = Line::from(vec![
-        Span::styled(" ", t.input()),
-        Span::styled(&app.search_query, t.input()),
-        Span::styled("▎", Style::default().fg(t.input_cursor.to_color())),
-    ]);
+    let line = if app.search_query.is_empty() {
+        Line::from(vec![
+            Span::styled("/ ", t.accent()),
+            Span::styled("▎", Style::default().fg(t.input_cursor.to_color())),
+            Span::styled(" type to narrow the list", t.muted()),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled("/ ", t.accent()),
+            Span::styled(&app.search_query, t.base().add_modifier(Modifier::BOLD)),
+            Span::styled("▎", Style::default().fg(t.input_cursor.to_color())),
+        ])
+    };
 
     frame.render_widget(Paragraph::new(line).block(block), area);
 }
@@ -74,70 +122,54 @@ pub fn draw_host_list(frame: &mut Frame, app: &AppService, area: Rect) {
         .border_type(BorderType::Rounded)
         .border_style(border)
         .title(Span::styled(title, title_style))
-        .padding(Padding::new(1, 1, 0, 0))
+        .padding(Padding::new(1, 1, 1, 0))
         .style(t.base());
 
+    let inner = block.inner(area);
+
     if entries.is_empty() {
-        let message = if app.has_filter() {
-            "No hosts match this search\n\nPress Esc to clear the filter"
+        let (headline, hint) = if app.has_filter() {
+            ("Nothing matches that filter", "Esc clears it")
         } else {
-            "No hosts in ~/.ssh/config\n\nPress 'a' to add one"
+            ("No hosts yet", "Press 'a' to add your first one")
         };
-        frame.render_widget(
-            Paragraph::new(message)
-                .style(t.muted())
-                .alignment(Alignment::Center)
-                .block(block),
-            area,
-        );
+        draw_placeholder(frame, app, block, area, headline, hint);
         return;
     }
 
-    let header = Row::new(["Alias", "HostName", "User"])
-        .style(t.header())
-        .height(1);
+    // INFO: a card breathes better with a blank row after it, but on a short
+    // panel that row costs a whole host, so it is the first thing to go
+    let spacing = if inner.height >= 11 { 1 } else { 0 };
+    // INFO: the right hand column is only worth its width when some host
+    // actually has a custom port or a key to show there
+    // the column carries its own two space gutter, so nothing collides
+    let meta = if inner.width >= 34 { meta_width(&entries) } else { 0 };
+    let meta_column = if meta > 0 { meta + 2 } else { 0 };
+    let text_width = inner.width.saturating_sub(meta_column + 2) as usize;
 
     let rows: Vec<Row> = entries
         .iter()
-        .map(|(_, host)| {
-            let target = if host.has_custom_port() {
-                format!("{}:{}", host.display_host(), host.port)
-            } else {
-                host.display_host().to_string()
-            };
-
-            let user = if host.user.is_empty() { "-" } else { host.user.as_str() };
-
-            Row::new([
-                Cell::from(host.alias.as_str()),
-                Cell::from(target),
-                Cell::from(user),
-            ])
-            .height(1)
-        })
+        .enumerate()
+        .map(|(row, (_, host))| card(app, row == app.cursor, host, text_width))
+        .map(|cells| Row::new(cells).height(2).bottom_margin(spacing))
         .collect();
 
-    let widths = [
-        Constraint::Percentage(36),
-        Constraint::Percentage(42),
-        Constraint::Percentage(22),
-    ];
+    let widths = [Constraint::Min(10), Constraint::Length(meta_column)];
 
     // INFO: TableState owns the scroll offset, which is what keeps the
     // selected host on screen once the list is taller than the panel
     let mut state = TableState::default().with_selected(Some(app.cursor));
 
     frame.render_stateful_widget(
-        Table::new(rows, widths)
-            .header(header)
-            .block(block)
-            .highlight_symbol("▸ ")
-            .highlight_style(t.selected()),
+        Table::new(rows, widths).block(block).column_spacing(0).highlight_symbol(Text::from(vec![
+            Line::from(Span::styled("┃ ", t.accent())),
+            Line::from(Span::styled("┃ ", t.accent())),
+        ])),
         area,
         &mut state,
     );
 
-    let viewport = area.height.saturating_sub(3) as usize;
+    let viewport = (inner.height as usize) / (2 + spacing as usize);
     if entries.len() > viewport {
         let mut scrollbar_state = ScrollbarState::new(entries.len()).position(app.cursor);
         frame.render_stateful_widget(
@@ -149,6 +181,83 @@ pub fn draw_host_list(frame: &mut Frame, app: &AppService, area: Rect) {
             &mut scrollbar_state,
         );
     }
+}
+
+fn meta_width(entries: &[(usize, &SshHost)]) -> u16 {
+    let widest = entries
+        .iter()
+        .map(|(_, host)| {
+            let port = if host.has_custom_port() { host.port.to_string().len() + 3 } else { 0 };
+            let key = key_name(host).chars().count();
+            port.max(key)
+        })
+        .max()
+        .unwrap_or(0);
+
+    (widest as u16).min(14)
+}
+
+fn key_name(host: &SshHost) -> &str {
+    if !host.has_identity_file() {
+        return "";
+    }
+    host.identity_file.rsplit('/').next().unwrap_or("")
+}
+
+/// One host as a two line card: what you type to connect, then where it
+/// actually goes, with the details worth scanning pushed to the right.
+fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, text_width: usize) -> Vec<Cell<'a>> {
+    let t = &app.theme;
+
+    let alias_style = if is_selected {
+        t.bold_accent()
+    } else {
+        t.base().add_modifier(Modifier::BOLD)
+    };
+
+    let target = if host.user.is_empty() {
+        host.display_host().to_string()
+    } else {
+        format!("{}@{}", host.user, host.display_host())
+    };
+
+    let text = Text::from(vec![
+        Line::from(Span::styled(ellipsize(&host.alias, text_width), alias_style)),
+        Line::from(Span::styled(ellipsize(&target, text_width), t.muted())),
+    ]);
+
+    let port = if host.has_custom_port() {
+        Line::from(Span::styled(format!(" :{} ", host.port), t.pill(&t.accent_secondary)))
+    } else {
+        Line::from("")
+    };
+
+    let key = Span::styled(key_name(host).to_string(), t.muted());
+
+    vec![
+        Cell::from(text),
+        Cell::from(Text::from(vec![port, Line::from(key)]).alignment(Alignment::Right)),
+    ]
+}
+
+/// An empty panel says what is missing and what to press, centred so it reads
+/// as a deliberate state rather than as a panel that failed to draw.
+fn draw_placeholder(frame: &mut Frame, app: &AppService, block: Block, area: Rect, headline: &str, hint: &str) {
+    let t = &app.theme;
+    let inner = block.inner(area);
+
+    let mut lines = vec![Line::from(""); (inner.height / 2).saturating_sub(2) as usize];
+    lines.push(Line::from(Span::styled(
+        headline.to_string(),
+        t.base().add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(hint.to_string(), t.muted())));
+
+    frame.render_widget(
+        Paragraph::new(lines).alignment(Alignment::Center).block(block),
+        area,
+    );
 }
 
 pub fn draw_detail_panel(frame: &mut Frame, app: &AppService, area: Rect) {
@@ -163,19 +272,13 @@ pub fn draw_detail_panel(frame: &mut Frame, app: &AppService, area: Rect) {
         .style(t.base());
 
     let Some(host) = app.selected_host() else {
-        frame.render_widget(
-            Paragraph::new("No host selected")
-                .style(t.muted())
-                .alignment(Alignment::Center)
-                .block(block),
-            area,
-        );
+        draw_placeholder(frame, app, block, area, "Nothing selected", "Pick a host on the left");
         return;
     };
 
-    let label = t.bold_accent();
     let value = t.base();
     let dim = t.muted();
+    let width = block.inner(area).width as usize;
 
     let port_display = host.port.to_string();
     let port_style = if host.has_custom_port() { value } else { dim };
@@ -186,23 +289,28 @@ pub fn draw_detail_panel(frame: &mut Frame, app: &AppService, area: Rect) {
     let key_display: &str = if host.has_identity_file() { &host.identity_file } else { "(default)" };
     let key_style = if host.has_identity_file() { value } else { dim };
 
-    let mut lines = vec![Line::from(Span::styled(host.alias.as_str(), t.title()))];
+    let mut lines = vec![Line::from(vec![
+        Span::styled("▏ ", t.accent()),
+        Span::styled(host.alias.as_str(), t.title()),
+    ])];
 
     if app.show_command {
-        lines.push(Line::from(Span::styled(host.as_ssh_command(), t.success())));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            ellipsize(&format!(" $ {} ", host.as_ssh_command()), width),
+            t.input(),
+        )));
     }
 
-    lines.extend([
-        Line::from(""),
-        detail_row("HostName ", host.display_host(), label, value),
-        detail_row("Port     ", &port_display, label, port_style),
-        detail_row("User     ", user_display, label, user_style),
-        detail_row("Identity ", key_display, label, key_style),
-    ]);
+    lines.push(Line::from(""));
+    lines.extend(detail_row("HostName ", host.display_host(), dim, value, width));
+    lines.extend(detail_row("Port     ", &port_display, dim, port_style, width));
+    lines.extend(detail_row("User     ", user_display, dim, user_style, width));
+    lines.extend(detail_row("Identity ", key_display, dim, key_style, width));
 
     if host.has_extra_options() {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("Extra options", t.accent_secondary())));
+        lines.push(Line::from(Span::styled("Extra options", t.bold_accent_secondary())));
         for (k, v) in &host.extra_options {
             lines.push(Line::from(vec![
                 Span::styled(format!("{:<10}", k), dim),
@@ -210,7 +318,6 @@ pub fn draw_detail_panel(frame: &mut Frame, app: &AppService, area: Rect) {
             ]));
         }
     }
-
 
     frame.render_widget(
         Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
@@ -225,11 +332,29 @@ fn ellipsize(text: &str, limit: usize) -> String {
     text.chars().take(limit.saturating_sub(1)).chain("…".chars()).collect()
 }
 
-fn detail_row<'a>(label: &'a str, value: &'a str, label_style: Style, value_style: Style) -> Line<'a> {
-    Line::from(vec![
-        Span::styled(label, label_style),
-        Span::styled(value, value_style),
-    ])
+/// Label and value share a line while they fit, and the value drops to its
+/// own indented line when they do not, which reads better than a wrap.
+fn detail_row<'a>(
+    label: &'a str,
+    value: &'a str,
+    label_style: Style,
+    value_style: Style,
+    width: usize,
+) -> Vec<Line<'a>> {
+    if label.chars().count() + value.chars().count() <= width {
+        return vec![Line::from(vec![
+            Span::styled(label, label_style),
+            Span::styled(value, value_style),
+        ])];
+    }
+
+    vec![
+        Line::from(Span::styled(label.trim_end(), label_style)),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(ellipsize(value, width.saturating_sub(2)), value_style),
+        ]),
+    ]
 }
 
 pub fn draw_status_bar(frame: &mut Frame, app: &AppService, area: Rect) {

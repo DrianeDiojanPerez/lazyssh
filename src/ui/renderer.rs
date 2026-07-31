@@ -43,6 +43,7 @@ fn draw_body(frame: &mut Frame, app: &AppService, area: ratatui::layout::Rect) {
     let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .spacing(1)
         .split(area);
 
     let has_search = app.mode == Mode::Search;
@@ -78,13 +79,58 @@ mod tests {
     }
 
     #[test]
+    fn a_host_reads_as_a_two_line_card() {
+        let (app, _repo) = app_with(hosts(3));
+
+        let screen = screenshot::draw(&app, 80, 24);
+        let lines: Vec<&str> = screen.lines().collect();
+        let marked = lines
+            .iter()
+            .position(|line| line.contains("┃ server-01"))
+            .unwrap_or_else(|| panic!("the selected card is not marked:\n{}", screen));
+
+        assert!(
+            lines[marked + 1].contains("dperez@server-01.example.com"),
+            "the card is missing its target line:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn a_custom_port_and_a_key_sit_beside_the_host() {
+        let mut list = hosts(2);
+        list[0].port = 2222;
+        list[0].identity_file = "~/.ssh/id_ed25519".into();
+
+        let (app, _repo) = app_with(list);
+        let screen = screenshot::draw(&app, 80, 24);
+        let card = screen
+            .lines()
+            .find(|line| line.contains("┃ server-01"))
+            .unwrap_or_else(|| panic!("the selected card is missing:\n{}", screen));
+
+        assert!(card.contains(":2222"), "the port badge is missing:\n{}", screen);
+        assert!(screen.contains("id_ed25519"), "the key is missing:\n{}", screen);
+    }
+
+    #[test]
+    fn an_empty_config_says_what_to_press() {
+        let (app, _repo) = app_with(vec![]);
+
+        let screen = screenshot::draw(&app, 80, 24);
+
+        assert!(screen.contains("No hosts yet"), "empty state is missing:\n{}", screen);
+        assert!(screen.contains("Press 'a' to add"), "the way forward is missing:\n{}", screen);
+    }
+
+    #[test]
     fn the_selected_host_stays_on_screen_in_a_long_list() {
         let (mut app, _repo) = app_with(hosts(40));
         app.jump_to_bottom();
 
         let screen = screenshot::draw(&app, 80, 24);
 
-        assert!(screen.contains("▸ server-40"), "selection scrolled out of view:\n{}", screen);
+        assert!(screen.contains("┃ server-40"), "selection scrolled out of view:\n{}", screen);
     }
 
     #[test]

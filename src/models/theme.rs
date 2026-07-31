@@ -67,13 +67,6 @@ impl Theme {
             .add_modifier(Modifier::BOLD)
     }
 
-    pub fn header(&self) -> Style {
-        Style::default()
-            .fg(self.header_fg.to_color())
-            .bg(if self.transparent { Color::Reset } else { self.header_bg.to_color() })
-            .add_modifier(Modifier::BOLD)
-    }
-
     /// A badge: the theme background written on top of a solid colour, so a
     /// short label reads as a filled chip rather than as more text.
     pub fn pill(&self, color: &Rgb) -> Style {
