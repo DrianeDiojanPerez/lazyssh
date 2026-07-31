@@ -221,7 +221,7 @@ pub fn draw_help(frame: &mut Frame, app: &AppService, body: Rect) {
     ];
 
     let rows = left.len().max(right.len());
-    let area = centered(70, rows as u16 + 7, body);
+    let area = centered(70, rows as u16 + 8, body);
     frame.render_widget(Clear, area);
 
     let block = Block::default()
@@ -248,6 +248,10 @@ pub fn draw_help(frame: &mut Frame, app: &AppService, body: Rect) {
     }
 
     lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("Mouse", t.bold_accent()),
+        Span::styled("  click selects, double click connects, the wheel scrolls", t.muted()),
+    ]));
     lines.push(Line::from(Span::styled("Esc closes this help", t.muted())));
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
