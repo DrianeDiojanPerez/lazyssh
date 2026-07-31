@@ -73,15 +73,26 @@ pub fn draw_form(frame: &mut Frame, app: &AppService, title: &str, body: Rect) {
         lines.push(Line::from(Span::styled(format!("  {}", message), t.bold_error())));
     }
 
-    lines.push(Line::from(vec![
-        Span::styled("  * required   ", t.muted()),
-        Span::styled("Tab", t.bold_accent()),
-        Span::styled(" next  ", t.muted()),
-        Span::styled("Enter", t.bold_accent()),
-        Span::styled(" save  ", t.muted()),
-        Span::styled("Esc", t.bold_accent()),
-        Span::styled(" cancel", t.muted()),
-    ]));
+    lines.push(if app.is_completing() {
+        Line::from(vec![
+            Span::styled("  ↑↓", t.bold_accent()),
+            Span::styled(" pick a key  ", t.muted()),
+            Span::styled("Enter", t.bold_accent()),
+            Span::styled(" use it  ", t.muted()),
+            Span::styled("Esc", t.bold_accent()),
+            Span::styled(" close", t.muted()),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled("  * required   ", t.muted()),
+            Span::styled("Tab", t.bold_accent()),
+            Span::styled(" next  ", t.muted()),
+            Span::styled("Enter", t.bold_accent()),
+            Span::styled(" save  ", t.muted()),
+            Span::styled("Esc", t.bold_accent()),
+            Span::styled(" cancel", t.muted()),
+        ])
+    });
 
     // INFO: on a terminal too short for the whole form, scroll just enough to
     // keep the field being edited on screen
@@ -89,7 +100,75 @@ pub fn draw_form(frame: &mut Frame, app: &AppService, title: &str, body: Rect) {
     let active_row = fields.iter().position(|f| *f == app.form_field).unwrap_or(0) * 3 + 2;
     let scroll = active_row.saturating_sub(inner_height) as u16;
 
+    let inner = block.inner(area);
     frame.render_widget(Paragraph::new(lines).block(block).scroll((scroll, 0)), area);
+
+    if app.is_completing() {
+        let field_row = fields.iter().position(|f| *f == app.form_field).unwrap_or(0);
+        let input_row = inner.y + (field_row * 3 + 1) as u16 - scroll;
+        draw_completions(frame, app, Rect { y: input_row, ..inner }, area);
+    }
+}
+
+/// The key list hangs off the field it belongs to, the way a completion menu
+/// does, and flips above the field when there is no room underneath.
+fn draw_completions(frame: &mut Frame, app: &AppService, field: Rect, form: Rect) {
+    let t = &app.theme;
+    let matches = app.identity_matches();
+
+    let width = matches
+        .iter()
+        .map(|path| path.chars().count() as u16 + 4)
+        .max()
+        .unwrap_or(0)
+        .clamp(24, field.width);
+
+    let height = (matches.len() as u16 + 2).min(7);
+
+    // INFO: the menu never covers the field it belongs to, so it drops below
+    // when there is room, sits above the label when there is not, and stays
+    // out of the way entirely on a terminal with room for neither
+    let below = field.y + 1;
+    let y = if below + height < form.bottom() {
+        below
+    } else if field.y >= form.y + height + 1 {
+        field.y - height - 1
+    } else {
+        return;
+    };
+
+    let area = Rect { x: field.x, y, width, height };
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(t.accent_secondary())
+        .title(Span::styled(" keys ", t.bold_accent_secondary()))
+        .padding(Padding::horizontal(1))
+        .style(t.base());
+
+    // INFO: the highlighted key is kept on screen when the list is longer
+    // than the menu, the same way the host list scrolls
+    let rows = block.inner(area).height as usize;
+    let picked = app.suggestion_cursor.unwrap_or(0);
+    let offset = picked.saturating_sub(rows.saturating_sub(1));
+
+    let lines: Vec<Line> = matches
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(rows)
+        .map(|(i, path)| {
+            let is_picked = app.suggestion_cursor == Some(i);
+            Line::from(Span::styled(
+                format!("{}{}", if is_picked { "▸ " } else { "  " }, path),
+                if is_picked { t.selected() } else { t.muted() },
+            ))
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 pub fn draw_delete_confirmation(frame: &mut Frame, app: &AppService, index: usize, body: Rect) {

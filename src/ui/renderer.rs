@@ -174,6 +174,27 @@ mod tests {
     }
 
     #[test]
+    fn the_identity_field_offers_the_keys_on_disk() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.begin_add();
+        app.form_field = crate::models::FormField::IdentityFile;
+
+        let screen = screenshot::draw(&app, 80, 24);
+
+        assert!(screen.contains("keys"), "the menu never opened:\n{}", screen);
+        assert!(screen.contains("~/.ssh/id_ed25519"), "a key is missing:\n{}", screen);
+        assert!(screen.contains("IdentityFile"), "the menu covers its own field:\n{}", screen);
+
+        for c in "work".chars() {
+            app.form_type_char(c);
+        }
+        let filtered = screenshot::draw(&app, 80, 24);
+
+        assert!(filtered.contains("work_ed255"), "the match is missing:\n{}", filtered);
+        assert!(!filtered.contains("id_rsa"), "the menu should have narrowed:\n{}", filtered);
+    }
+
+    #[test]
     fn a_click_picks_the_card_it_lands_on() {
         let (mut app, _repo) = app_with(hosts(40));
         app.jump_to_bottom();
