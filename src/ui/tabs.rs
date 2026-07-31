@@ -23,10 +23,9 @@ fn badge_width(app: &AppService) -> u16 {
 const TAB_LEFT: &str = "\u{e0be}";
 const TAB_RIGHT: &str = "\u{e0b8}";
 
-/// The tabs sit on the middle line of the row, with a blank line above and
-/// below them.
+/// The tabs sit on the first line of the row, with a blank one under them.
 fn label_row(area: Rect) -> u16 {
-    area.y + 1
+    area.y
 }
 
 /// What a click on the tab bar meant.
@@ -110,7 +109,7 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
         spans.extend(tab_pill(&label, colour, fill, t, edges));
     }
 
-    let lines = vec![Line::from(""), Line::from(spans)];
+    let lines = vec![Line::from(spans)];
     frame.render_widget(Paragraph::new(lines).style(t.base()), area);
 }
 
