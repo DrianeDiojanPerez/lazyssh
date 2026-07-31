@@ -531,6 +531,35 @@ mod tests {
     }
 
     #[test]
+    fn the_tabs_are_plain_until_the_slant_is_switched_on() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.sessions.push(
+            crate::services::Session::spawn("server-01", "sleep", &["5".into()], 20, 40)
+                .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+
+        let plain = screenshot::draw(&app, 100, 20);
+        assert!(!plain.contains('\u{e0be}'), "a tab should start plain:\n{}", plain);
+
+        app.toggle_tab_edges(&crate::test_support::StubThemeRepo);
+        let slanted = screenshot::draw(&app, 100, 20);
+
+        assert!(
+            slanted.contains('\u{e0be}'),
+            "the setting should put the slant back:\n{}",
+            slanted
+        );
+
+        // whichever way it is drawn, a click still lands on the tab
+        let tabs = super::frames(&app, Rect::new(0, 0, 100, 20)).tabs;
+        assert_eq!(
+            crate::ui::tabs::tab_at(&app, tabs, column_of(&slanted, tabs.y, "server-01"), tabs.y),
+            Some(crate::ui::tabs::TabHit::Select(0)),
+        );
+    }
+
+    #[test]
     fn an_open_session_takes_a_tab_and_the_main_pane() {
         let (mut app, _repo) = app_with(hosts(3));
         app.sessions.push(
@@ -637,7 +666,12 @@ mod tests {
         let body = super::frames(&app, Rect::new(0, 0, 84, 22)).body;
         let screen = screenshot::draw(&app, 84, 22);
 
-        for (label, index) in [("Take the whole terminal", 2), ("Theme", 3), ("Transparency", 4)] {
+        for (label, index) in [
+            ("Take the whole terminal", 2),
+            ("Theme", 3),
+            ("Transparency", 4),
+            ("Slanted tabs", 5),
+        ] {
             assert_eq!(
                 crate::ui::popups::setting_at(body, 40, row_of(&screen, label)),
                 Some(index),

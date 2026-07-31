@@ -37,6 +37,7 @@ fn layout(app: &AppService) -> Vec<(u16, String, usize)> {
     // INFO: the row starts hard against the left edge, so nothing is indented
     // away from the corner of the screen
     let mut x = badge_width();
+    let edges = u16::from(app.tab_edges()) * 2;
 
     for (index, session) in app.sessions.iter().enumerate() {
         // a session that has ended keeps its tab until it is closed, so the
@@ -45,8 +46,8 @@ fn layout(app: &AppService) -> Vec<(u16, String, usize)> {
         let label = format!(" {}{} {} ", mark, session.alias, CLOSE);
 
         placed.push((x, label.clone(), index));
-        // a slant at each end, then a space before the next tab
-        x += label.chars().count() as u16 + 3;
+        // the slants if they are on, then a space before the next tab
+        x += label.chars().count() as u16 + edges + 1;
     }
 
     placed
@@ -61,10 +62,10 @@ pub fn tab_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<Tab
 
     layout(app)
         .into_iter()
-        .find(|(x, label, _)| column >= *x && column < x + width_of(label))
+        .find(|(x, label, _)| column >= *x && column < x + width_of(app, label))
         .map(|(x, label, index)| {
             // the cross keeps the right hand end of the tab to itself
-            if column >= x + width_of(&label) - 3 {
+            if column >= x + width_of(app, &label) - 2 - u16::from(app.tab_edges()) {
                 TabHit::Close(index)
             } else {
                 TabHit::Select(index)
@@ -72,8 +73,8 @@ pub fn tab_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<Tab
         })
 }
 
-fn width_of(label: &str) -> u16 {
-    label.chars().count() as u16 + 2
+fn width_of(app: &AppService, label: &str) -> u16 {
+    label.chars().count() as u16 + u16::from(app.tab_edges()) * 2
 }
 
 /// Tabs are cards of their own: the one you are looking at is filled in and
@@ -83,6 +84,7 @@ fn width_of(label: &str) -> u16 {
 pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
     let mut spans = label_pill(BADGE, t.accent_secondary.to_color(), t.pill(&t.accent_secondary), t);
+    let edges = app.tab_edges();
 
     for (_, label, index) in layout(app) {
         let is_active = app.active_tab == Some(index);
@@ -93,7 +95,7 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
             _ => (t.input_bg.to_color(), t.surface()),
         };
 
-        spans.extend(tab_pill(&label, colour, fill, t));
+        spans.extend(tab_pill(&label, colour, fill, t, edges));
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)).style(t.base()), area);
@@ -120,7 +122,12 @@ fn tab_pill<'a>(
     colour: ratatui::style::Color,
     fill: ratatui::style::Style,
     t: &crate::models::Theme,
+    edges: bool,
 ) -> Vec<Span<'a>> {
+    if !edges {
+        return vec![Span::styled(label.to_string(), fill), Span::raw(" ")];
+    }
+
     let slant = t.base().fg(colour);
 
     vec![
