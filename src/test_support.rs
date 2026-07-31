@@ -51,7 +51,7 @@ impl ThemeRepository for StubThemeRepo {
     /// drawn in, not just which character.
     fn catalog(&self) -> Vec<Theme> {
         let c = |n: u8| Rgb::new(n, n, n);
-        vec![Theme {
+        let stub = Theme {
             name: "stub".into(),
             transparent: true,
             bg: c(1),
@@ -73,7 +73,16 @@ impl ThemeRepository for StubThemeRepo {
             input_bg: c(17),
             input_fg: c(18),
             input_cursor: c(19),
-        }]
+        };
+
+        let other = Theme {
+            name: "other".into(),
+            transparent: false,
+            accent: Rgb::new(200, 100, 50),
+            ..stub.clone()
+        };
+
+        vec![stub, other]
     }
 }
 
