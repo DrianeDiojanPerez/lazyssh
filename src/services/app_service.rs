@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::models::{Action, Focus, FormField, Mode, SshHost, Theme, ThemePreference, Toast};
+use crate::models::{
+    Action, Focus, FormField, LaunchStyle, Mode, SshHost, Theme, ThemePreference, Toast,
+};
 use crate::repositories::{SshRepository, ThemeRepository};
 use crate::services::{Probes, Session};
 
@@ -47,6 +49,7 @@ pub struct AppService {
     pub active_tab: Option<usize>,
     pub focus: Focus,
     pub sidebar_open: bool,
+    pub settings_cursor: usize,
 }
 
 impl AppService {
@@ -98,6 +101,7 @@ impl AppService {
             active_tab: None,
             focus: Focus::Sidebar,
             sidebar_open: true,
+            settings_cursor: 0,
         }
     }
 
@@ -370,6 +374,24 @@ impl AppService {
 
     // ─── SSH Execution ───────────────────────────────────────────────────
 
+    pub fn settings_cursor_up(&mut self) {
+        self.settings_cursor = self.settings_cursor.saturating_sub(1);
+    }
+
+    pub fn settings_cursor_down(&mut self) {
+        self.settings_cursor = (self.settings_cursor + 1).min(LaunchStyle::all().len() - 1);
+    }
+
+    pub fn choose_launch_style(&mut self, style: LaunchStyle, theme_repo: &dyn ThemeRepository) {
+        self.theme_preference.launch_style = style;
+        theme_repo.save_preference(&self.theme_preference);
+        self.toast(Toast::success(format!("Connections: {}", style.label().to_lowercase())));
+    }
+
+    pub fn launch_style(&self) -> LaunchStyle {
+        self.theme_preference.launch_style
+    }
+
     /// Opens the selected host in a tab of its own and hands it the keyboard.
     /// A host already open is brought forward instead of dialled twice.
     pub fn open_session(&mut self, rows: u16, columns: u16) {
@@ -378,12 +400,14 @@ impl AppService {
         };
 
         let alias = host.alias.clone();
+        let args = host.as_ssh_args();
+        self.mode = Mode::Normal;
         if let Some(index) = self.sessions.iter().position(|s| s.alias == alias) {
             self.select_tab(index);
             return;
         }
 
-        match Session::open(&alias, &host.as_ssh_args(), rows, columns) {
+        match Session::open(&alias, &args, rows, columns) {
             Ok(session) => {
                 self.sessions.push(session);
                 self.select_tab(self.sessions.len() - 1);
@@ -857,6 +881,15 @@ mod tests {
 
         assert_eq!(app.host_count(), 0);
         assert_eq!(app.mode, Mode::AddHost);
+    }
+
+    #[test]
+    fn a_chosen_way_is_kept_for_next_time() {
+        let (mut app, _repo) = app_with(vec![host("box", 22)]);
+
+        app.choose_launch_style(LaunchStyle::Tab, &crate::test_support::StubThemeRepo);
+
+        assert_eq!(app.launch_style(), LaunchStyle::Tab);
     }
 
     #[test]
