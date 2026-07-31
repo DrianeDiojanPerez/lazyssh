@@ -127,6 +127,48 @@ pub enum Reachability {
     Offline,
 }
 
+/// A line in the settings panel that can actually be acted on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Setting {
+    Launch(LaunchStyle),
+    Theme,
+    Transparency,
+}
+
+impl Setting {
+    pub fn all() -> Vec<Self> {
+        let mut rows: Vec<Self> = LaunchStyle::all().iter().map(|s| Self::Launch(*s)).collect();
+        rows.push(Self::Theme);
+        rows.push(Self::Transparency);
+        rows
+    }
+
+    /// Which line of the panel this row is drawn on, counting the headings
+    /// and the blank line between the two groups.
+    pub fn line(index: usize) -> u16 {
+        match index {
+            0..=2 => index as u16 + 1,
+            other => other as u16 + 3,
+        }
+    }
+
+    pub fn at_line(line: u16) -> Option<usize> {
+        match line {
+            1..=3 => Some(line as usize - 1),
+            6..=7 => Some(line as usize - 3),
+            _ => None,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Launch(style) => style.label(),
+            Self::Theme => "Theme",
+            Self::Transparency => "Transparency",
+        }
+    }
+}
+
 /// Which half of the screen the keyboard is talking to.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Focus {
