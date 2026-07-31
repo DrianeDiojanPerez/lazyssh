@@ -2,7 +2,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph},
     Frame,
 };
 
@@ -32,17 +32,18 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
 fn draw_one(frame: &mut Frame, app: &AppService, toast: &Toast, area: Rect, top: u16) {
     let t = &app.theme;
 
+    // the filled circle glyphs nvim-notify uses, so the icon reads as a badge
     let (icon, title, color) = match toast.kind {
-        ToastKind::Success => ("✔", "Success", &t.success),
-        ToastKind::Error => ("✖", "Error", &t.error),
+        ToastKind::Success => ("\u{f05a}", "Success", &t.success),
+        ToastKind::Error => ("\u{f057}", "Error", &t.error),
     };
 
     let heading = format!("{} {}", icon, title);
     let content = (heading.chars().count() + toast.at.chars().count() + 2)
         .max(toast.message.chars().count());
 
-    // borders, the stripe, the space after it and a gutter on the right
-    let full_width = (content as u16 + 5).clamp(MIN_WIDTH, MAX_WIDTH).min(area.width);
+    // the borders and a column of air on each side
+    let full_width = (content as u16 + 4).clamp(MIN_WIDTH, MAX_WIDTH).min(area.width);
 
     // INFO: the corner is fixed and the width is animated, which is as close
     // to sliding in from off screen as a terminal gets
@@ -54,32 +55,30 @@ fn draw_one(frame: &mut Frame, app: &AppService, toast: &Toast, area: Rect, top:
     let rect = Rect { x: area.right().saturating_sub(width), y: top, width, height: HEIGHT };
     frame.render_widget(Clear, rect);
 
+    // INFO: the whole frame takes the level colour, which is what makes a
+    // toast readable as good or bad news before a word of it is read
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(t.border())
+        .border_style(Style::default().fg(color.to_color()))
+        .padding(Padding::horizontal(1))
         .style(t.base());
 
-    let text_width = rect.width.saturating_sub(5) as usize;
-    let stripe = Span::styled("▌ ", Style::default().fg(color.to_color()));
+    let text_width = rect.width.saturating_sub(4) as usize;
 
     let lines = vec![
         Line::from(vec![
-            stripe.clone(),
             Span::styled(
                 ellipsize(&heading, text_width),
                 Style::default().fg(color.to_color()).add_modifier(Modifier::BOLD),
             ),
             Span::styled(stamp(toast, &heading, text_width), t.muted()),
         ]),
-        Line::from(vec![stripe.clone(), Span::styled("─".repeat(text_width), t.border())]),
-        Line::from(vec![
-            stripe,
-            Span::styled(
-                ellipsize(&toast.message, text_width),
-                t.base().add_modifier(Modifier::BOLD),
-            ),
-        ]),
+        Line::from(Span::styled("─".repeat(text_width), t.border())),
+        Line::from(Span::styled(
+            ellipsize(&toast.message, text_width),
+            t.base().add_modifier(Modifier::BOLD),
+        )),
     ];
 
     frame.render_widget(Paragraph::new(lines).block(block), rect);
