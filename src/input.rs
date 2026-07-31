@@ -7,7 +7,7 @@ use ratatui::layout::Rect;
 use crate::models::Mode;
 use crate::repositories::{SshRepository, ThemeRepository};
 use crate::services::AppService;
-use crate::ui::{panels, renderer};
+use crate::ui::{panels, popups, renderer};
 
 /// Waiting stops for a frame at a time while toasts are on screen so they can
 /// animate, and blocks outright when there is nothing left to move.
@@ -49,49 +49,118 @@ pub fn handle_next_event(
     }
 
     match event::read()? {
-        Event::Key(key) => {
-            app.clear_form_error();
-
-            match &app.mode {
-                Mode::Normal => on_normal(app, key, ssh_repo, theme_repo),
-                Mode::Search => on_search(app, key),
-                Mode::AddHost => on_form(app, key, ssh_repo),
-                Mode::EditHost(_) => on_form(app, key, ssh_repo),
-                Mode::ConfirmDelete(idx) => on_confirm_delete(app, key, *idx, ssh_repo),
-                Mode::SelectTheme => on_theme_select(app, key, theme_repo),
-                Mode::Help => on_help(app, key),
-            }
-        }
-        Event::Mouse(mouse) => on_mouse(app, mouse, clicks)?,
+        Event::Key(key) => dispatch_key(app, key, ssh_repo, theme_repo),
+        Event::Mouse(mouse) => on_mouse(app, mouse, clicks, ssh_repo, theme_repo)?,
         _ => {}
     }
     Ok(())
 }
 
-/// The wheel moves whichever list is in front, and a click picks the host it
-/// lands on. Popups keep the mouse out so nothing is confirmed by accident.
-fn on_mouse(app: &mut AppService, mouse: MouseEvent, clicks: &mut Clicks) -> std::io::Result<()> {
+/// One way in for keys, whether they came from the keyboard or from a click on
+/// the hint that names them.
+fn dispatch_key(
+    app: &mut AppService,
+    key: KeyEvent,
+    ssh_repo: &dyn SshRepository,
+    theme_repo: &dyn ThemeRepository,
+) {
+    app.clear_form_error();
+
+    match &app.mode {
+        Mode::Normal => on_normal(app, key, ssh_repo, theme_repo),
+        Mode::Search => on_search(app, key),
+        Mode::AddHost => on_form(app, key, ssh_repo),
+        Mode::EditHost(_) => on_form(app, key, ssh_repo),
+        Mode::ConfirmDelete(idx) => on_confirm_delete(app, key, *idx, ssh_repo),
+        Mode::SelectTheme => on_theme_select(app, key, theme_repo),
+        Mode::Help => on_help(app, key),
+    }
+}
+
+/// Everything on screen answers to the mouse: the wheel drives whichever list
+/// is in front, and a click acts on the row, field or button underneath it.
+fn on_mouse(
+    app: &mut AppService,
+    mouse: MouseEvent,
+    clicks: &mut Clicks,
+    ssh_repo: &dyn SshRepository,
+    theme_repo: &dyn ThemeRepository,
+) -> std::io::Result<()> {
+    let (width, height) = terminal::size()?;
+    let frames = renderer::frames(Rect::new(0, 0, width, height), app.mode == Mode::Search);
+    let (column, row) = (mouse.column, mouse.row);
+
     match (&app.mode, mouse.kind) {
-        (Mode::SelectTheme, MouseEventKind::ScrollUp) => app.theme_cursor_up(),
-        (Mode::SelectTheme, MouseEventKind::ScrollDown) => app.theme_cursor_down(),
+        (Mode::SelectTheme, MouseEventKind::ScrollUp) => return ok(app.theme_cursor_up()),
+        (Mode::SelectTheme, MouseEventKind::ScrollDown) => return ok(app.theme_cursor_down()),
 
-        (Mode::Normal | Mode::Search, MouseEventKind::ScrollUp) => app.move_cursor_up(),
-        (Mode::Normal | Mode::Search, MouseEventKind::ScrollDown) => app.move_cursor_down(),
+        (Mode::AddHost | Mode::EditHost(_), MouseEventKind::ScrollUp) => {
+            return ok(app.suggestion_up())
+        }
+        (Mode::AddHost | Mode::EditHost(_), MouseEventKind::ScrollDown) => {
+            return ok(app.suggestion_down())
+        }
 
-        (Mode::Normal | Mode::Search, MouseEventKind::Down(MouseButton::Left)) => {
-            let (width, height) = terminal::size()?;
-            let list = renderer::frames(Rect::new(0, 0, width, height), app.mode == Mode::Search).list;
+        (Mode::Normal | Mode::Search, MouseEventKind::ScrollUp) => return ok(app.move_cursor_up()),
+        (Mode::Normal | Mode::Search, MouseEventKind::ScrollDown) => {
+            return ok(app.move_cursor_down())
+        }
 
-            if let Some(index) = panels::host_at(app, list, mouse.column, mouse.row) {
+        (_, MouseEventKind::Down(MouseButton::Left)) => {}
+        _ => return Ok(()),
+    }
+
+    // INFO: the hints are a row of buttons in every mode, so they are offered
+    // the click before whatever mode is on screen
+    if let Some(code) = panels::hint_at(app, frames.status, column, row) {
+        dispatch_key(app, KeyEvent::new(code, KeyModifiers::NONE), ssh_repo, theme_repo);
+        return Ok(());
+    }
+
+    match app.mode.clone() {
+        Mode::Normal | Mode::Search => {
+            if let Some(index) = panels::host_at(app, frames.list, column, row) {
                 app.select(index);
-                if clicks.is_double(mouse.column, mouse.row) {
+                if clicks.is_double(column, row) {
                     app.launch_ssh();
                 }
             }
         }
 
-        _ => {}
+        Mode::AddHost | Mode::EditHost(_) => {
+            let body = frames.body;
+
+            if let Some(index) = popups::suggestion_at(app, body, column, row) {
+                app.pick_suggestion(index);
+            } else if let Some(button) = popups::form_button_at(app, body, column, row) {
+                match button {
+                    popups::FormButton::Save => commit_form(app, ssh_repo),
+                    popups::FormButton::Cancel => app.cancel_mode(),
+                }
+            } else if let Some(field) = popups::field_at(app, body, column, row) {
+                app.focus_field(field);
+            }
+        }
+
+        Mode::ConfirmDelete(index) => match popups::delete_button_at(frames.body, column, row) {
+            Some(popups::DeleteButton::Delete) => app.commit_delete(index, ssh_repo),
+            Some(popups::DeleteButton::Keep) => app.cancel_mode(),
+            None => {}
+        },
+
+        Mode::SelectTheme => {
+            if let Some(index) = popups::theme_at(app, frames.body, column, row) {
+                app.pick_theme(index, theme_repo);
+            }
+        }
+
+        Mode::Help => app.cancel_mode(),
     }
+
+    Ok(())
+}
+
+fn ok(_: ()) -> std::io::Result<()> {
     Ok(())
 }
 
