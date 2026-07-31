@@ -2,15 +2,16 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph},
     Frame,
 };
 
 use crate::models::{Toast, ToastKind};
 use crate::services::AppService;
 
-const MAX_WIDTH: u16 = 42;
-const HEIGHT: u16 = 3;
+const MAX_WIDTH: u16 = 46;
+const MIN_WIDTH: u16 = 24;
+const HEIGHT: u16 = 5;
 const GAP: u16 = 1;
 
 /// Toasts float over the top right corner, newest underneath, each one sliding
@@ -31,42 +32,69 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
 fn draw_one(frame: &mut Frame, app: &AppService, toast: &Toast, area: Rect, top: u16) {
     let t = &app.theme;
 
-    let (icon, color) = match toast.kind {
-        ToastKind::Success => ("✔", &t.success),
-        ToastKind::Error => ("✖", &t.error),
+    let (icon, title, color) = match toast.kind {
+        ToastKind::Success => ("✔", "Success", &t.success),
+        ToastKind::Error => ("✖", "Error", &t.error),
     };
 
-    let full_width = (toast.message.chars().count() as u16 + 8)
-        .min(MAX_WIDTH)
-        .min(area.width);
+    let heading = format!("{} {}", icon, title);
+    let content = (heading.chars().count() + toast.at.chars().count() + 2)
+        .max(toast.message.chars().count());
+
+    // borders, the stripe, the space after it and a gutter on the right
+    let full_width = (content as u16 + 5).clamp(MIN_WIDTH, MAX_WIDTH).min(area.width);
 
     // INFO: the corner is fixed and the width is animated, which is as close
     // to sliding in from off screen as a terminal gets
     let width = (full_width as f32 * toast.openness()).round() as u16;
-    if width < 4 {
+    if width < 6 {
         return;
     }
 
     let rect = Rect { x: area.right().saturating_sub(width), y: top, width, height: HEIGHT };
-
     frame.render_widget(Clear, rect);
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(color.to_color()))
-        .padding(Padding::horizontal(1))
+        .border_style(t.border())
         .style(t.base());
 
-    // INFO: a filled badge and bold text are what make a toast register out of
-    // the corner of the eye, which is the whole point of raising one
-    let text = Line::from(vec![
-        Span::styled(format!(" {} ", icon), t.pill(color)),
-        Span::styled(format!(" {}", toast.message), t.base().add_modifier(Modifier::BOLD)),
-    ]);
+    let text_width = rect.width.saturating_sub(5) as usize;
+    let stripe = Span::styled("▌ ", Style::default().fg(color.to_color()));
 
-    frame.render_widget(Paragraph::new(text).block(block), rect);
+    let lines = vec![
+        Line::from(vec![
+            stripe.clone(),
+            Span::styled(
+                ellipsize(&heading, text_width),
+                Style::default().fg(color.to_color()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(stamp(toast, &heading, text_width), t.muted()),
+        ]),
+        Line::from(vec![stripe.clone(), Span::styled("─".repeat(text_width), t.border())]),
+        Line::from(vec![
+            stripe,
+            Span::styled(
+                ellipsize(&toast.message, text_width),
+                t.base().add_modifier(Modifier::BOLD),
+            ),
+        ]),
+    ];
+
+    frame.render_widget(Paragraph::new(lines).block(block), rect);
     draw_life_bar(frame, toast, rect, color.to_color());
+}
+
+/// The clock sits hard right on the title row, and gives way entirely once the
+/// toast is too narrow to hold both it and the heading.
+fn stamp(toast: &Toast, heading: &str, text_width: usize) -> String {
+    let room = text_width.saturating_sub(heading.chars().count());
+    if room < toast.at.chars().count() + 1 {
+        return String::new();
+    }
+
+    format!("{:>width$}", toast.at, width = room)
 }
 
 /// The bottom border doubles as the countdown, so the toast shows how long it
@@ -83,4 +111,11 @@ fn draw_life_bar(frame: &mut Frame, toast: &Toast, rect: Rect, color: ratatui::s
             .set_symbol("━")
             .set_style(Style::default().fg(color));
     }
+}
+
+fn ellipsize(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_string();
+    }
+    text.chars().take(limit.saturating_sub(1)).chain("…".chars()).collect()
 }

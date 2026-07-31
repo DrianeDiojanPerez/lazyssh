@@ -96,15 +96,19 @@ mod tests {
             sliding
         );
 
-        app.advance_toasts(Duration::from_millis(200));
+        app.advance_toasts(Duration::from_millis(300));
         let open = screenshot::draw(&app, 80, 18);
-        let row = open
+        let title = open
             .lines()
-            .find(|line| line.contains("✔"))
+            .find(|line| line.contains("✔ Success"))
             .unwrap_or_else(|| panic!("the toast never opened:\n{}", open));
 
-        assert!(row.contains("Added 'prod-web'"), "the message is cut off:\n{}", open);
-        assert!(row.ends_with('│'), "the toast is not against the right edge:\n{}", open);
+        assert!(title.ends_with('│'), "the toast is not against the right edge:\n{}", open);
+        assert!(
+            open.lines().any(|line| line.contains("Added 'prod-web'")),
+            "the message is cut off:\n{}",
+            open
+        );
     }
 
     #[test]
