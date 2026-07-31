@@ -1,6 +1,6 @@
 use ratatui::{
     layout::Rect,
-    style::Style,
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph},
     Frame,
@@ -36,7 +36,7 @@ fn draw_one(frame: &mut Frame, app: &AppService, toast: &Toast, area: Rect, top:
         ToastKind::Error => ("✖", &t.error),
     };
 
-    let full_width = (toast.message.chars().count() as u16 + 6)
+    let full_width = (toast.message.chars().count() as u16 + 8)
         .min(MAX_WIDTH)
         .min(area.width);
 
@@ -58,9 +58,11 @@ fn draw_one(frame: &mut Frame, app: &AppService, toast: &Toast, area: Rect, top:
         .padding(Padding::horizontal(1))
         .style(t.base());
 
+    // INFO: a filled badge and bold text are what make a toast register out of
+    // the corner of the eye, which is the whole point of raising one
     let text = Line::from(vec![
-        Span::styled(format!("{} ", icon), Style::default().fg(color.to_color())),
-        Span::styled(&toast.message, t.base()),
+        Span::styled(format!(" {} ", icon), t.pill(color)),
+        Span::styled(format!(" {}", toast.message), t.base().add_modifier(Modifier::BOLD)),
     ]);
 
     frame.render_widget(Paragraph::new(text).block(block), rect);
