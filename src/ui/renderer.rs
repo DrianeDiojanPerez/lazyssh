@@ -34,8 +34,9 @@ pub fn frames(app: &AppService, area: Rect) -> Frames {
         .direction(Direction::Vertical)
         .constraints([
             // INFO: the tab row is always there, empty or not, so opening the
-            // first connection does not shove the whole screen down a line
-            Constraint::Length(1),
+            // first connection does not shove the whole screen down a line,
+            // with a blank line above and below to keep it off the edges
+            Constraint::Length(3),
             Constraint::Min(5),
             Constraint::Length(1),
         ])
@@ -417,7 +418,7 @@ mod tests {
     fn the_tab_row_holds_its_place_while_it_is_empty() {
         let (app, _repo) = app_with(hosts(3));
         let screen = screenshot::draw(&app, 100, 20);
-        let row = super::frames(&app, Rect::new(0, 0, 100, 20)).tabs.y;
+        let row = super::frames(&app, Rect::new(0, 0, 100, 20)).tabs.y + 1;
 
         assert!(
             screen.lines().nth(row as usize).is_some_and(|line| line.contains("tabs")),
@@ -546,7 +547,12 @@ mod tests {
         // whichever way it is drawn, a click still lands on the tab
         let tabs = super::frames(&app, Rect::new(0, 0, 100, 20)).tabs;
         assert_eq!(
-            crate::ui::tabs::tab_at(&app, tabs, column_of(&slanted, tabs.y, "server-01"), tabs.y),
+            crate::ui::tabs::tab_at(
+                &app,
+                tabs,
+                column_of(&slanted, tabs.y + 1, "server-01"),
+                tabs.y + 1
+            ),
             Some(crate::ui::tabs::TabHit::Select(0)),
         );
     }
@@ -572,7 +578,7 @@ mod tests {
         let frames = super::frames(&app, Rect::new(0, 0, 100, 20));
         let tabs = frames.tabs;
 
-        let label = tabs.y;
+        let label = tabs.y + 1;
         assert_eq!(
             crate::ui::tabs::tab_at(&app, tabs, column_of(&screen, label, "server-01"), label),
             Some(crate::ui::tabs::TabHit::Select(0)),
@@ -679,10 +685,10 @@ mod tests {
         let (app, _repo) = app_with(hosts(3));
 
         let screen = screenshot::draw(&app, 100, 12);
-        let top = screen.lines().next().expect("a screen has rows");
+        let top = screen.lines().nth(1).expect("a screen has rows");
         let bottom = screen.lines().last().expect("a screen has rows");
 
-        assert!(top.contains("tabs"), "the tab row should be the top row now:\n{}", screen);
+        assert!(top.contains("tabs"), "the tab row should be near the top now:\n{}", screen);
         assert!(bottom.contains("NORMAL"), "the bar lost its mode:\n{}", screen);
         assert!(bottom.contains("? help"), "the bar lost its hints:\n{}", screen);
         assert!(bottom.contains(".ssh/config"), "the bar lost the config path:\n{}", screen);

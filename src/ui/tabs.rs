@@ -23,6 +23,12 @@ fn badge_width(app: &AppService) -> u16 {
 const TAB_LEFT: &str = "\u{e0be}";
 const TAB_RIGHT: &str = "\u{e0b8}";
 
+/// The tabs sit on the middle line of the row, with a blank line above and
+/// below them.
+fn label_row(area: Rect) -> u16 {
+    area.y + 1
+}
+
 /// What a click on the tab bar meant.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TabHit {
@@ -54,7 +60,7 @@ fn layout(app: &AppService) -> Vec<(u16, String, usize)> {
 }
 
 pub fn tab_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<TabHit> {
-    if row < area.y || row >= area.bottom() {
+    if row != label_row(area) {
         return None;
     }
 
@@ -104,7 +110,8 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
         spans.extend(tab_pill(&label, colour, fill, t, edges));
     }
 
-    frame.render_widget(Paragraph::new(Line::from(spans)).style(t.base()), area);
+    let lines = vec![Line::from(""), Line::from(spans)];
+    frame.render_widget(Paragraph::new(lines).style(t.base()), area);
 }
 
 /// The row's label, slanted on its right the same way a tab is, and left as a
