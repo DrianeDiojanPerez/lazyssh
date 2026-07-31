@@ -102,29 +102,77 @@ pub fn draw_search_bar(frame: &mut Frame, app: &AppService, area: Rect) {
     frame.render_widget(Paragraph::new(line).block(block), area);
 }
 
-pub fn draw_host_list(frame: &mut Frame, app: &AppService, area: Rect) {
+/// The panel the cards live in. Built in one place because mouse hit testing
+/// needs the very same borders and padding the renderer uses.
+fn list_block(app: &AppService) -> Block<'static> {
     let t = &app.theme;
     let is_focused = matches!(app.mode, Mode::Normal | Mode::Search);
 
-    let border = if is_focused { t.border_focused() } else { t.border() };
-    let title_style = if is_focused { t.title() } else { t.muted() };
-
     let entries = app.visible_hosts();
-
     let title = if app.has_filter() {
         format!(" Hosts {}/{}  '{}' ", entries.len(), app.host_count(), ellipsize(&app.search_query, 12))
     } else {
         format!(" Hosts {} ", app.host_count())
     };
 
-    let block = Block::default()
+    Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(border)
-        .title(Span::styled(title, title_style))
+        .border_style(if is_focused { t.border_focused() } else { t.border() })
+        .title(Span::styled(title, if is_focused { t.title() } else { t.muted() }))
         .padding(Padding::new(1, 1, 1, 0))
-        .style(t.base());
+        .style(t.base())
+}
 
+/// Where the cards land inside the panel. Every card is the same height, so
+/// the row a click lands on maps straight back to a host.
+pub struct Cards {
+    pub top: u16,
+    pub height: u16,
+    pub visible: usize,
+    pub offset: usize,
+}
+
+pub fn cards(app: &AppService, area: Rect) -> Cards {
+    let inner = list_block(app).inner(area);
+
+    // INFO: a card breathes better with a blank row after it, but on a short
+    // panel that row costs a whole host, so it is the first thing to go
+    let height = if inner.height >= 11 { 3 } else { 2 };
+    let visible = (inner.height / height).max(1) as usize;
+
+    Cards {
+        top: inner.y,
+        height,
+        visible,
+        // INFO: the table starts every frame from a fresh state, so it scrolls
+        // just far enough to reach the selected card and no further
+        offset: app.cursor.saturating_sub(visible.saturating_sub(1)),
+    }
+}
+
+/// The host under a point, for a click. None when the point is past the last
+/// card or outside the panel altogether.
+pub fn host_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<usize> {
+    if column < area.x || column >= area.right() || row < area.y || row >= area.bottom() {
+        return None;
+    }
+
+    let cards = cards(app, area);
+    let slot = (row.checked_sub(cards.top)? / cards.height) as usize;
+    if slot >= cards.visible {
+        return None;
+    }
+
+    let index = cards.offset + slot;
+    (index < app.visible_hosts().len()).then_some(index)
+}
+
+pub fn draw_host_list(frame: &mut Frame, app: &AppService, area: Rect) {
+    let t = &app.theme;
+    let entries = app.visible_hosts();
+
+    let block = list_block(app);
     let inner = block.inner(area);
 
     if entries.is_empty() {
@@ -137,12 +185,10 @@ pub fn draw_host_list(frame: &mut Frame, app: &AppService, area: Rect) {
         return;
     }
 
-    // INFO: a card breathes better with a blank row after it, but on a short
-    // panel that row costs a whole host, so it is the first thing to go
-    let spacing = if inner.height >= 11 { 1 } else { 0 };
+    let layout = cards(app, area);
     // INFO: the right hand column is only worth its width when some host
-    // actually has a custom port or a key to show there
-    // the column carries its own two space gutter, so nothing collides
+    // actually has a custom port or a key to show there, and it carries its
+    // own two space gutter so nothing collides
     let meta = if inner.width >= 34 { meta_width(&entries) } else { 0 };
     let meta_column = if meta > 0 { meta + 2 } else { 0 };
     let text_width = inner.width.saturating_sub(meta_column + 2) as usize;
@@ -150,8 +196,8 @@ pub fn draw_host_list(frame: &mut Frame, app: &AppService, area: Rect) {
     let rows: Vec<Row> = entries
         .iter()
         .enumerate()
-        .map(|(row, (_, host))| card(app, row == app.cursor, host, text_width))
-        .map(|cells| Row::new(cells).height(2).bottom_margin(spacing))
+        .map(|(row, (_, host))| card(app, row == app.cursor, host, text_width, layout.height))
+        .map(|cells| Row::new(cells).height(layout.height))
         .collect();
 
     let widths = [Constraint::Min(10), Constraint::Length(meta_column)];
@@ -169,8 +215,7 @@ pub fn draw_host_list(frame: &mut Frame, app: &AppService, area: Rect) {
         &mut state,
     );
 
-    let viewport = (inner.height as usize) / (2 + spacing as usize);
-    if entries.len() > viewport {
+    if entries.len() > layout.visible {
         let mut scrollbar_state = ScrollbarState::new(entries.len()).position(app.cursor);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
@@ -206,7 +251,13 @@ fn key_name(host: &SshHost) -> &str {
 
 /// One host as a two line card: what you type to connect, then where it
 /// actually goes, with the details worth scanning pushed to the right.
-fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, text_width: usize) -> Vec<Cell<'a>> {
+fn card<'a>(
+    app: &AppService,
+    is_selected: bool,
+    host: &SshHost,
+    text_width: usize,
+    height: u16,
+) -> Vec<Cell<'a>> {
     let t = &app.theme;
 
     let alias_style = if is_selected {
@@ -221,22 +272,29 @@ fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, text_width: usi
         format!("{}@{}", host.user, host.display_host())
     };
 
-    let text = Text::from(vec![
+    // INFO: the blank row belongs to the card rather than to a row margin, so
+    // that every card is exactly as tall as the hit testing believes it is
+    let mut text = vec![
         Line::from(Span::styled(ellipsize(&host.alias, text_width), alias_style)),
         Line::from(Span::styled(ellipsize(&target, text_width), t.muted())),
-    ]);
+    ];
+    text.resize(height as usize, Line::from(""));
+    let text = Text::from(text);
 
+    let mut meta: Vec<Line> = Vec::new();
     let port = if host.has_custom_port() {
         Line::from(Span::styled(format!(" :{} ", host.port), t.pill(&t.accent_secondary)))
     } else {
         Line::from("")
     };
 
-    let key = Span::styled(key_name(host).to_string(), t.muted());
+    meta.push(port);
+    meta.push(Line::from(Span::styled(key_name(host).to_string(), t.muted())));
+    meta.resize(height as usize, Line::from(""));
 
     vec![
         Cell::from(text),
-        Cell::from(Text::from(vec![port, Line::from(key)]).alignment(Alignment::Right)),
+        Cell::from(Text::from(meta).alignment(Alignment::Right)),
     ]
 }
 

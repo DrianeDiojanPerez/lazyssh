@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     widgets::Block,
     Frame,
 };
@@ -11,12 +11,19 @@ use super::panels;
 use super::popups;
 use super::toasts;
 
-pub fn render(frame: &mut Frame, app: &AppService) {
-    let area = frame.size();
+/// Where each part of the screen sits. Worked out once so that drawing and
+/// mouse hit testing can never disagree about what is where.
+pub struct Frames {
+    pub body: Rect,
+    pub search: Option<Rect>,
+    pub list: Rect,
+    pub details: Rect,
+    pub header: Rect,
+    pub status: Rect,
+}
 
-    frame.render_widget(Block::default().style(app.theme.base()), area);
-
-    let main_layout = Layout::default()
+pub fn frames(area: Rect, searching: bool) -> Frames {
+    let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(2),
@@ -25,11 +32,46 @@ pub fn render(frame: &mut Frame, app: &AppService) {
         ])
         .split(area);
 
-    panels::draw_header(frame, app, main_layout[0]);
-    draw_body(frame, app, main_layout[1]);
-    panels::draw_status_bar(frame, app, main_layout[2]);
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .spacing(1)
+        .split(rows[1]);
 
-    let body = main_layout[1];
+    let left = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(if searching { 3 } else { 0 }),
+            Constraint::Min(5),
+        ])
+        .split(columns[0]);
+
+    Frames {
+        body: rows[1],
+        search: searching.then_some(left[0]),
+        list: left[1],
+        details: columns[1],
+        header: rows[0],
+        status: rows[2],
+    }
+}
+
+pub fn render(frame: &mut Frame, app: &AppService) {
+    let area = frame.size();
+
+    frame.render_widget(Block::default().style(app.theme.base()), area);
+
+    let frames = frames(area, app.mode == Mode::Search);
+
+    panels::draw_header(frame, app, frames.header);
+    if let Some(search) = frames.search {
+        panels::draw_search_bar(frame, app, search);
+    }
+    panels::draw_host_list(frame, app, frames.list);
+    panels::draw_detail_panel(frame, app, frames.details);
+    panels::draw_status_bar(frame, app, frames.status);
+
+    let body = frames.body;
     toasts::draw(frame, app, body);
     match &app.mode {
         Mode::AddHost => popups::draw_form(frame, app, " Add host ", body),
@@ -41,39 +83,11 @@ pub fn render(frame: &mut Frame, app: &AppService) {
     }
 }
 
-fn draw_body(frame: &mut Frame, app: &AppService, area: ratatui::layout::Rect) {
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
-        .spacing(1)
-        .split(area);
-
-    let has_search = app.mode == Mode::Search;
-
-    let left_panes = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(if has_search { 3 } else { 0 }),
-            Constraint::Min(5),
-        ])
-        .split(columns[0]);
-
-    if has_search {
-        panels::draw_search_bar(frame, app, left_panes[0]);
-    }
-    panels::draw_host_list(frame, app, left_panes[1]);
-
-    let right_panes = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(8)])
-        .split(columns[1]);
-
-    panels::draw_detail_panel(frame, app, right_panes[0]);
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
+
+    use ratatui::layout::Rect;
 
     use crate::models::Toast;
     use crate::test_support::{app_with, host};
@@ -100,7 +114,7 @@ mod tests {
         let open = screenshot::draw(&app, 80, 18);
         let title = open
             .lines()
-            .find(|line| line.contains("✔ Success"))
+            .find(|line| line.contains("Success"))
             .unwrap_or_else(|| panic!("the toast never opened:\n{}", open));
 
         assert!(title.ends_with('│'), "the toast is not against the right edge:\n{}", open);
@@ -120,6 +134,60 @@ mod tests {
 
         assert!(!app.has_toasts(), "the toast outstayed its lifetime");
         assert!(!screenshot::draw(&app, 80, 18).contains("Added"));
+    }
+
+    /// The alias line of a card, as drawn: "server-07" and not the line under
+    /// it, which reads "dperez@server-07.example.com".
+    fn alias_rows(screen: &str) -> Vec<(u16, usize)> {
+        screen
+            .lines()
+            .enumerate()
+            .filter_map(|(row, line)| {
+                let text = line.trim_start_matches(['│', '┃', ' ']);
+                let number = text.strip_prefix("server-")?.get(..2)?.parse::<usize>().ok()?;
+                (!text.contains('@')).then_some((row as u16, number - 1))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_click_picks_the_card_it_lands_on() {
+        let (mut app, _repo) = app_with(hosts(40));
+        app.jump_to_bottom();
+
+        let list = super::frames(Rect::new(0, 0, 80, 24), false).list;
+        let screen = screenshot::draw(&app, 80, 24);
+        let drawn = alias_rows(&screen);
+        assert!(drawn.len() > 3, "expected a full panel of cards:\n{}", screen);
+
+        for (row, index) in drawn {
+            assert_eq!(
+                crate::ui::panels::host_at(&app, list, list.x + 2, row),
+                Some(index),
+                "clicking row {} should pick server-{:02}:\n{}",
+                row,
+                index + 1,
+                screen
+            );
+        }
+    }
+
+    #[test]
+    fn a_click_on_empty_space_picks_nothing() {
+        let (app, _repo) = app_with(hosts(2));
+
+        let list = super::frames(Rect::new(0, 0, 80, 24), false).list;
+
+        assert_eq!(
+            crate::ui::panels::host_at(&app, list, list.x + 2, list.bottom() - 2),
+            None,
+            "the space below the last card is not a host"
+        );
+        assert_eq!(
+            crate::ui::panels::host_at(&app, list, list.right() + 4, list.y + 2),
+            None,
+            "the details panel is not the host list"
+        );
     }
 
     #[test]
