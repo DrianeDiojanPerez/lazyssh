@@ -520,6 +520,12 @@ mod tests {
             "clicking the cross should close it:\n{}",
             screen
         );
+        assert_eq!(
+            crate::ui::tabs::tab_at(&app, tabs, column_of(&screen, label, "server-01") - 2, label),
+            Some(crate::ui::tabs::TabHit::Select(0)),
+            "the rounded end belongs to its tab:\n{}",
+            screen
+        );
     }
 
     #[test]

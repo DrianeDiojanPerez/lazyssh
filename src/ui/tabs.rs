@@ -10,6 +10,10 @@ use crate::services::AppService;
 
 const CLOSE: &str = "×";
 
+/// The powerline half circles that round a tab off at each end.
+const LEFT_CAP: &str = "\u{e0b6}";
+const RIGHT_CAP: &str = "\u{e0b4}";
+
 /// What a click on the tab bar meant.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TabHit {
@@ -30,8 +34,8 @@ fn layout(app: &AppService) -> Vec<(u16, String, usize)> {
         let label = format!(" {}{} {} ", mark, session.alias, CLOSE);
 
         placed.push((x, label.clone(), index));
-        // a space between one tab and the next
-        x += label.chars().count() as u16 + 1;
+        // the two caps, then a space before the next tab
+        x += label.chars().count() as u16 + 3;
     }
 
     placed
@@ -49,7 +53,7 @@ pub fn tab_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<Tab
         .find(|(x, label, _)| column >= *x && column < x + width_of(label))
         .map(|(x, label, index)| {
             // the cross keeps the right hand end of the tab to itself
-            if column >= x + width_of(&label) - 2 {
+            if column >= x + width_of(&label) - 3 {
                 TabHit::Close(index)
             } else {
                 TabHit::Select(index)
@@ -58,7 +62,7 @@ pub fn tab_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<Tab
 }
 
 fn width_of(label: &str) -> u16 {
-    label.chars().count() as u16
+    label.chars().count() as u16 + 2
 }
 
 /// Tabs are cards of their own: the one you are looking at is filled in and
@@ -80,15 +84,19 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     for (_, label, index) in layout(app) {
         let is_active = app.active_tab == Some(index);
 
-        // INFO: the fill is the whole of the difference, so a tab is a plain
-        // block of colour with nothing drawn around it
-        let fill = match (is_active, app.focus) {
-            (true, Focus::Session) => t.pill(&t.accent),
-            (true, Focus::Sidebar) => t.selected(),
-            _ => t.surface(),
+        // INFO: the caps are drawn in the colour the tab is filled with, on
+        // the page behind it, which is what rounds the ends off
+        let (colour, fill) = match (is_active, app.focus) {
+            (true, Focus::Session) => (t.accent.to_color(), t.pill(&t.accent)),
+            (true, Focus::Sidebar) => (t.selected_bg.to_color(), t.selected()),
+            _ => (t.input_bg.to_color(), t.surface()),
         };
 
+        let cap = t.base().fg(colour);
+
+        spans.push(Span::styled(LEFT_CAP, cap));
         spans.push(Span::styled(label, fill));
+        spans.push(Span::styled(RIGHT_CAP, cap));
         spans.push(Span::raw(" "));
     }
 
