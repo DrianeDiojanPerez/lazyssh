@@ -47,30 +47,32 @@ impl ThemeRepository for StubThemeRepo {
 
     fn save_preference(&self, _preference: &ThemePreference) {}
 
+    /// Every colour is distinct so a test can tell which style a cell was
+    /// drawn in, not just which character.
     fn catalog(&self) -> Vec<Theme> {
-        let c = || Rgb::new(0, 0, 0);
+        let c = |n: u8| Rgb::new(n, n, n);
         vec![Theme {
             name: "stub".into(),
             transparent: true,
-            bg: c(),
-            fg: c(),
-            accent: c(),
-            accent_secondary: c(),
-            border: c(),
-            border_focused: c(),
-            header_bg: c(),
-            header_fg: c(),
-            selected_bg: c(),
-            selected_fg: c(),
-            status_bar_bg: c(),
-            status_bar_fg: c(),
-            error: c(),
-            success: c(),
-            warning: c(),
-            muted: c(),
-            input_bg: c(),
-            input_fg: c(),
-            input_cursor: c(),
+            bg: c(1),
+            fg: c(2),
+            accent: c(3),
+            accent_secondary: c(4),
+            border: c(5),
+            border_focused: c(6),
+            header_bg: c(7),
+            header_fg: c(8),
+            selected_bg: c(9),
+            selected_fg: c(10),
+            status_bar_bg: c(11),
+            status_bar_fg: c(12),
+            error: c(13),
+            success: c(14),
+            warning: c(15),
+            muted: c(16),
+            input_bg: c(17),
+            input_fg: c(18),
+            input_cursor: c(19),
         }]
     }
 }
