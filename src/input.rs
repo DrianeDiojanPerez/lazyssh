@@ -157,6 +157,12 @@ fn on_form(app: &mut AppService, key: KeyEvent, ssh_repo: &dyn SshRepository) {
     }
 
     match key.code {
+        // INFO: the completion menu gets first refusal on the keys it needs,
+        // so Esc closes the menu before it closes the form
+        KeyCode::Down if app.is_completing() => app.suggestion_down(),
+        KeyCode::Up if app.is_completing() => app.suggestion_up(),
+        KeyCode::Esc if app.clear_suggestion() => {}
+
         KeyCode::Esc => app.cancel_mode(),
 
         KeyCode::Tab => {
@@ -171,6 +177,7 @@ fn on_form(app: &mut AppService, key: KeyEvent, ssh_repo: &dyn SshRepository) {
         KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             commit_form(app, ssh_repo);
         }
+        KeyCode::Enter if app.accept_suggestion() => {}
         KeyCode::Enter => commit_form(app, ssh_repo),
 
         KeyCode::Backspace => app.form_delete_char(),
