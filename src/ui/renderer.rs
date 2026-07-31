@@ -337,6 +337,16 @@ mod tests {
         );
     }
 
+    /// A host on a port that is actually listening, so the probe can find it.
+    fn reachable() -> (crate::models::SshHost, std::net::TcpListener) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let mut host = host("localbox", port);
+        host.hostname = "127.0.0.1".into();
+        (host, listener)
+    }
+
     fn settle(done: impl Fn() -> bool) {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !done() {
@@ -377,6 +387,36 @@ mod tests {
             shut.main.width
         );
         assert!(!screenshot::draw(&app, 80, 24).contains("Filter"));
+    }
+
+    #[test]
+    fn a_reachable_host_gets_a_green_lamp_and_a_dead_one_a_red_lamp() {
+        let (up, _listener) = reachable();
+        let (app, _repo) = app_with(vec![up, host("dead-host", 22)]);
+
+        settle(|| !app.probes.is_working());
+
+        let screen = screenshot::draw(&app, 80, 24);
+        let buffer = screenshot::buffer(&app, 80, 24);
+        let lamp_on = |alias: &str| {
+            let row = row_of(&screen, alias);
+            let line = screen.lines().nth(row as usize).unwrap();
+            let column = line.rfind('●').expect("the card has no lamp");
+            buffer.get(line[..column].chars().count() as u16, row).style().fg
+        };
+
+        assert_eq!(
+            lamp_on("│ localbox"),
+            Some(app.theme.success.to_color()),
+            "a host that answered should be lit green:\n{}",
+            screen
+        );
+        assert_eq!(
+            lamp_on("│ dead-host"),
+            Some(app.theme.error.to_color()),
+            "a host that did not answer should be lit red:\n{}",
+            screen
+        );
     }
 
     #[test]

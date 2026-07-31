@@ -10,7 +10,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::models::{Mode, SshHost};
+use crate::models::{Mode, Reachability, SshHost};
 use crate::services::AppService;
 
 pub fn draw_header(frame: &mut Frame, app: &AppService, area: Rect) {
@@ -259,12 +259,28 @@ fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -
         .then(|| Span::styled(format!(" :{} ", host.port), t.pill(&t.accent_secondary)));
     let key = key_name(host);
 
+    // INFO: the lamp sits in the top right of the card, where a status light
+    // belongs, and says whether the host answered on its ssh port
+    let (lamp, lamp_style) = match app.probes.status(&host.alias) {
+        Reachability::Online => ("●", t.success_dot()),
+        Reachability::Offline => ("●", t.error()),
+        Reachability::Checking => ("◌", t.muted()),
+        Reachability::Unknown => ("○", t.muted()),
+    };
+
+    let mut head: Vec<Span> = Vec::new();
+    if let Some(port) = port {
+        head.push(port);
+        head.push(Span::raw(" "));
+    }
+    head.push(Span::styled(lamp, lamp_style));
+
     vec![
         Line::from(Span::styled(
             format!("{}{}{}", glyphs[0], glyphs[1].repeat(width.saturating_sub(2)), glyphs[2]),
             edge,
         )),
-        inside(glyphs, edge, room, &host.alias, alias_style, port),
+        inside_many(glyphs, edge, room, &host.alias, alias_style, head),
         inside(
             glyphs,
             edge,
