@@ -14,11 +14,10 @@ const CLOSE: &str = "×";
 const BADGE: &str = " tabs ";
 
 fn badge_width() -> u16 {
-    BADGE.chars().count() as u16 + 3
+    BADGE.chars().count() as u16 + 2
 }
 
-/// The powerline points that finish a tab off at each end.
-const LEFT_CAP: &str = "\u{e0b2}";
+/// The powerline point that finishes a tab off on its right.
 const RIGHT_CAP: &str = "\u{e0b0}";
 
 /// What a click on the tab bar meant.
@@ -41,8 +40,8 @@ fn layout(app: &AppService) -> Vec<(u16, String, usize)> {
         let label = format!(" {}{} {} ", mark, session.alias, CLOSE);
 
         placed.push((x, label.clone(), index));
-        // the two caps, then a space before the next tab
-        x += label.chars().count() as u16 + 3;
+        // the point, then a space before the next tab
+        x += label.chars().count() as u16 + 2;
     }
 
     placed
@@ -69,7 +68,7 @@ pub fn tab_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<Tab
 }
 
 fn width_of(label: &str) -> u16 {
-    label.chars().count() as u16 + 2
+    label.chars().count() as u16 + 1
 }
 
 /// Tabs are cards of their own: the one you are looking at is filled in and
@@ -96,20 +95,17 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     frame.render_widget(Paragraph::new(Line::from(spans)).style(t.base()), area);
 }
 
-/// A label with both ends brought to a point. The caps are drawn in the colour
-/// the tab is filled with, on the page behind it, which is what shapes them.
+/// A label brought to a point on its right. The point is drawn in the colour
+/// the tab is filled with, on the page behind it, which is what shapes it.
 fn pill<'a>(
     label: &str,
     colour: ratatui::style::Color,
     fill: ratatui::style::Style,
     t: &crate::models::Theme,
 ) -> Vec<Span<'a>> {
-    let cap = t.base().fg(colour);
-
     vec![
-        Span::styled(LEFT_CAP, cap),
         Span::styled(label.to_string(), fill),
-        Span::styled(RIGHT_CAP, cap),
+        Span::styled(RIGHT_CAP, t.base().fg(colour)),
         Span::raw(" "),
     ]
 }
