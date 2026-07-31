@@ -137,8 +137,17 @@ fn dispatch_key(
 fn on_choose_launch(app: &mut AppService, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => app.cancel_mode(),
+
+        KeyCode::Left | KeyCode::Char('h') => app.launch_cursor_left(),
+        KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => app.launch_cursor_right(),
+
         KeyCode::Char('f') | KeyCode::Char('F') => app.launch_full_screen(),
-        KeyCode::Char('t') | KeyCode::Char('T') | KeyCode::Enter => open_session(app),
+        KeyCode::Char('t') | KeyCode::Char('T') => open_session(app),
+
+        // INFO: Enter takes whichever answer the arrows have landed on
+        KeyCode::Enter if app.launch_cursor == 0 => open_session(app),
+        KeyCode::Enter => app.launch_full_screen(),
+
         _ => {}
     }
 }
