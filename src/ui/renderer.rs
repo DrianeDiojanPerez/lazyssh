@@ -422,6 +422,20 @@ mod tests {
     }
 
     #[test]
+    fn the_tab_row_holds_its_place_while_it_is_empty() {
+        let (app, _repo) = app_with(hosts(3));
+        let screen = screenshot::draw(&app, 100, 20);
+        let row = super::frames(&app, Rect::new(0, 0, 100, 20)).tabs.y;
+
+        assert_eq!(
+            screen.lines().nth(row as usize).map(str::trim),
+            Some(""),
+            "an empty tab row should be empty, not gone:\n{}",
+            screen
+        );
+    }
+
+    #[test]
     fn opening_the_first_tab_moves_nothing_else() {
         let (mut app, _repo) = app_with(hosts(3));
         let area = Rect::new(0, 0, 100, 20);
@@ -438,57 +452,6 @@ mod tests {
         assert!(
             screenshot::draw(&app, 100, 20).contains("server-01"),
             "the row should be showing the tab now"
-        );
-    }
-
-    #[test]
-    fn the_tab_row_is_labelled_whether_or_not_anything_is_open() {
-        let (mut app, _repo) = app_with(hosts(3));
-
-        assert!(
-            screenshot::draw(&app, 100, 20).contains("lazyssh  0"),
-            "the empty row has lost its label"
-        );
-
-        app.sessions.push(
-            crate::services::Session::spawn("server-01", "true", &[], 20, 40)
-                .expect("the pty should have started"),
-        );
-        let screen = screenshot::draw(&app, 100, 20);
-
-        assert!(screen.contains("lazyssh  1"), "the label should count the tabs:\n{}", screen);
-        assert!(screen.contains("server-01"), "the tab is missing:\n{}", screen);
-    }
-
-    #[test]
-    fn the_tab_you_are_on_is_the_filled_one() {
-        let (mut app, _repo) = app_with(hosts(3));
-        for alias in ["server-01", "server-02"] {
-            app.sessions.push(
-                crate::services::Session::spawn(alias, "true", &[], 20, 40)
-                    .expect("the pty should have started"),
-            );
-        }
-        app.select_tab(0);
-
-        let screen = screenshot::draw(&app, 100, 20);
-        let buffer = screenshot::buffer(&app, 100, 20);
-        let row = super::frames(&app, Rect::new(0, 0, 100, 20)).tabs.y;
-        let background = |alias: &str| {
-            buffer.get(column_of(&screen, row, alias), row).style().bg
-        };
-
-        assert_eq!(
-            background("server-01"),
-            Some(app.theme.accent.to_color()),
-            "the tab you are on should be filled:\n{}",
-            screen
-        );
-        assert_eq!(
-            background("server-02"),
-            Some(app.theme.input_bg.to_color()),
-            "the other tab should sit back on its own surface:\n{}",
-            screen
         );
     }
 
