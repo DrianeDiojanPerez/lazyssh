@@ -413,8 +413,20 @@ impl AppService {
         true
     }
 
+    /// Takes the key a click landed on, wherever the highlight happened to be.
+    pub fn pick_suggestion(&mut self, index: usize) {
+        self.suggestion_cursor = Some(index);
+        self.accept_suggestion();
+    }
+
     pub fn clear_suggestion(&mut self) -> bool {
         self.suggestion_cursor.take().is_some()
+    }
+
+    /// Puts the cursor in a field, for a click straight onto one.
+    pub fn focus_field(&mut self, field: FormField) {
+        self.suggestion_cursor = None;
+        self.form_field = field;
     }
 
     pub fn form_next_field(&mut self) {
@@ -517,6 +529,11 @@ impl AppService {
             self.toast(Toast::success(format!("Theme: {}", name)));
         }
         self.mode = Mode::Normal;
+    }
+
+    pub fn pick_theme(&mut self, index: usize, theme_repo: &dyn ThemeRepository) {
+        self.theme_cursor = index;
+        self.apply_selected_theme(theme_repo);
     }
 
     pub fn toggle_transparency(&mut self, theme_repo: &dyn ThemeRepository) {
