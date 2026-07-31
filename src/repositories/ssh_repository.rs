@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use chrono::Local;
@@ -9,6 +10,9 @@ pub trait SshRepository {
     fn load_all(&self) -> (String, Vec<SshHost>);
     fn save_all(&self, preamble: &str, hosts: &[SshHost]) -> Result<PathBuf, String>;
     fn config_path(&self) -> PathBuf;
+    /// The private keys sitting next to the config, offered as completions for
+    /// the IdentityFile field.
+    fn identity_files(&self) -> Vec<String>;
 }
 
 pub struct FileSshRepository {
@@ -111,6 +115,50 @@ impl SshRepository for FileSshRepository {
 
     fn config_path(&self) -> PathBuf {
         self.path.clone()
+    }
+
+    fn identity_files(&self) -> Vec<String> {
+        let Some(dir) = self.path.parent() else {
+            return Vec::new();
+        };
+
+        let Ok(entries) = fs::read_dir(dir) else {
+            return Vec::new();
+        };
+
+        let mut keys: Vec<String> = entries
+            .flatten()
+            .filter(|entry| entry.path().is_file())
+            .filter(|entry| is_private_key(&entry.path()))
+            .map(|entry| shorten(&entry.path()))
+            .collect();
+
+        keys.sort();
+        keys
+    }
+}
+
+/// A private key announces itself on its first line, which beats guessing from
+/// the file name and keeps known_hosts and the backups out of the list.
+fn is_private_key(path: &std::path::Path) -> bool {
+    if path.extension().is_some_and(|ext| ext == "pub") {
+        return false;
+    }
+
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
+
+    let mut first = String::new();
+    BufReader::new(file).read_line(&mut first).is_ok() && first.contains("PRIVATE KEY")
+}
+
+fn shorten(path: &std::path::Path) -> String {
+    let full = path.to_string_lossy().to_string();
+
+    match dirs::home_dir() {
+        Some(home) => full.replacen(&home.to_string_lossy().to_string(), "~", 1),
+        None => full,
     }
 }
 

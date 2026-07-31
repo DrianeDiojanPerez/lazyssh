@@ -28,6 +28,14 @@ impl SshRepository for StubSshRepo {
     fn config_path(&self) -> PathBuf {
         PathBuf::from("/home/tester/.ssh/config")
     }
+
+    fn identity_files(&self) -> Vec<String> {
+        vec![
+            "~/.ssh/id_ed25519".into(),
+            "~/.ssh/id_rsa".into(),
+            "~/.ssh/work_ed25519".into(),
+        ]
+    }
 }
 
 pub struct StubThemeRepo;
