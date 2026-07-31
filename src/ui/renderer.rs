@@ -515,10 +515,10 @@ mod tests {
             "the answer under the cursor should be the filled one:\n{}",
             screen
         );
-        assert_ne!(
+        assert_eq!(
             filled(&screen, "Whole terminal"),
-            Some(app.theme.accent.to_color()),
-            "only one answer should be filled:\n{}",
+            Some(app.theme.selected_bg.to_color()),
+            "the other answer should sit back on its own surface:\n{}",
             screen
         );
         assert_eq!(

@@ -529,7 +529,7 @@ fn choice<'a>(label: &'a str, is_picked: bool, t: &crate::models::Theme) -> Span
 
     match is_picked {
         true => Span::styled(text, t.pill(&t.accent)),
-        false => Span::styled(text, t.muted().add_modifier(Modifier::DIM)),
+        false => Span::styled(text, t.surface()),
     }
 }
 
