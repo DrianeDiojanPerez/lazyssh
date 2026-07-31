@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use chrono::Local;
+
 /// How long a toast takes to slide in, and to slide back out again.
 const ENTER: Duration = Duration::from_millis(200);
 const LEAVE: Duration = Duration::from_millis(260);
@@ -17,6 +19,8 @@ pub enum ToastKind {
 pub struct Toast {
     pub message: String,
     pub kind: ToastKind,
+    /// The wall clock time it was raised, shown on the title row.
+    pub at: String,
     age: Duration,
 }
 
@@ -30,7 +34,12 @@ impl Toast {
     }
 
     fn new(message: impl Into<String>, kind: ToastKind) -> Self {
-        Self { message: message.into(), kind, age: Duration::ZERO }
+        Self {
+            message: message.into(),
+            kind,
+            at: Local::now().format("%H:%M:%S").to_string(),
+            age: Duration::ZERO,
+        }
     }
 
     /// Errors are worth reading twice, so they stay around longer.
