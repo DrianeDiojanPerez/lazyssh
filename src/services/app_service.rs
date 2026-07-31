@@ -27,6 +27,10 @@ pub struct AppService {
     pub search_query: String,
     pub visible_indices: Vec<usize>,
     pub show_command: bool,
+    // INFO: the keys on disk are read once at startup and offered as
+    // completions whenever the IdentityFile field has focus
+    identity_files: Vec<String>,
+    pub suggestion_cursor: Option<usize>,
     pub toasts: Vec<Toast>,
     // INFO: a rejected form stays open, so its complaint belongs inside the
     // form rather than in a toast that flies away
@@ -70,6 +74,8 @@ impl AppService {
             search_query: String::new(),
             visible_indices: (0..host_count).collect(),
             show_command: true,
+            identity_files: ssh_repo.identity_files(),
+            suggestion_cursor: None,
             toasts: Vec::new(),
             form_error: None,
             pending_action: Action::Continue,
@@ -204,6 +210,7 @@ impl AppService {
     // ─── CRUD via Repository ─────────────────────────────────────────────
 
     pub fn begin_add(&mut self) {
+        self.suggestion_cursor = None;
         self.form_draft = SshHost::empty();
         self.form_port = String::new();
         self.form_field = FormField::Alias;
@@ -211,6 +218,7 @@ impl AppService {
     }
 
     pub fn begin_edit(&mut self) {
+        self.suggestion_cursor = None;
         if let Some(index) = self.selected_real_index() {
             self.form_draft = self.hosts[index].clone();
             self.form_port = self.form_draft.port.to_string();
@@ -347,15 +355,80 @@ impl AppService {
 
     // ─── Form Editing ────────────────────────────────────────────────────
 
+    // ─── IdentityFile completion ─────────────────────────────────────────
+
+    /// The keys worth offering for what has been typed so far. Everything is
+    /// on the table until the field says otherwise.
+    pub fn identity_matches(&self) -> Vec<&str> {
+        let typed = self.form_draft.identity_file.trim().to_lowercase();
+
+        self.identity_files
+            .iter()
+            .filter(|path| typed.is_empty() || path.to_lowercase().contains(&typed))
+            .map(|path| path.as_str())
+            .collect()
+    }
+
+    pub fn is_completing(&self) -> bool {
+        self.form_field == FormField::IdentityFile && !self.identity_matches().is_empty()
+    }
+
+    pub fn suggestion_down(&mut self) {
+        let count = self.identity_matches().len();
+        if count == 0 {
+            return;
+        }
+
+        self.suggestion_cursor = Some(match self.suggestion_cursor {
+            Some(current) => (current + 1) % count,
+            None => 0,
+        });
+    }
+
+    pub fn suggestion_up(&mut self) {
+        let count = self.identity_matches().len();
+        if count == 0 {
+            return;
+        }
+
+        self.suggestion_cursor = Some(match self.suggestion_cursor {
+            Some(0) | None => count - 1,
+            Some(current) => current - 1,
+        });
+    }
+
+    /// Puts the highlighted key into the field. False when nothing was
+    /// highlighted, which leaves the keypress to whoever wants it next.
+    pub fn accept_suggestion(&mut self) -> bool {
+        let Some(index) = self.suggestion_cursor else {
+            return false;
+        };
+
+        let Some(path) = self.identity_matches().get(index).map(|p| p.to_string()) else {
+            return false;
+        };
+
+        self.form_draft.identity_file = path;
+        self.suggestion_cursor = None;
+        true
+    }
+
+    pub fn clear_suggestion(&mut self) -> bool {
+        self.suggestion_cursor.take().is_some()
+    }
+
     pub fn form_next_field(&mut self) {
+        self.suggestion_cursor = None;
         self.form_field = self.form_field.next();
     }
 
     pub fn form_previous_field(&mut self) {
+        self.suggestion_cursor = None;
         self.form_field = self.form_field.previous();
     }
 
     pub fn form_type_char(&mut self, c: char) {
+        self.suggestion_cursor = None;
         if !self.form_field.accepts_char(c) {
             return;
         }
@@ -365,6 +438,7 @@ impl AppService {
     }
 
     pub fn form_delete_char(&mut self) {
+        self.suggestion_cursor = None;
         let mut value = self.read_form_field();
         value.pop();
         self.write_form_field(value);
@@ -617,6 +691,43 @@ mod tests {
 
         assert_eq!(app.host_count(), 0);
         assert_eq!(app.mode, Mode::AddHost);
+    }
+
+    #[test]
+    fn the_key_list_narrows_to_what_has_been_typed() {
+        let (mut app, _repo) = app_with(vec![host("box", 22)]);
+        app.begin_add();
+
+        assert_eq!(app.identity_matches().len(), 3, "every key is on offer to begin with");
+
+        type_into(&mut app, FormField::IdentityFile, "work");
+        assert_eq!(app.identity_matches(), vec!["~/.ssh/work_ed25519"]);
+    }
+
+    #[test]
+    fn picking_a_key_fills_the_field_in() {
+        let (mut app, _repo) = app_with(vec![host("box", 22)]);
+        app.begin_add();
+        app.form_field = FormField::IdentityFile;
+
+        assert!(!app.accept_suggestion(), "nothing is highlighted yet");
+
+        app.suggestion_down();
+        app.suggestion_down();
+        assert!(app.accept_suggestion());
+        assert_eq!(app.form_draft.identity_file, "~/.ssh/id_rsa");
+        assert!(app.suggestion_cursor.is_none(), "the menu closes once a key is taken");
+    }
+
+    #[test]
+    fn the_menu_only_belongs_to_the_identity_field() {
+        let (mut app, _repo) = app_with(vec![host("box", 22)]);
+        app.begin_add();
+
+        assert!(!app.is_completing());
+
+        app.form_field = FormField::IdentityFile;
+        assert!(app.is_completing());
     }
 
     #[test]
