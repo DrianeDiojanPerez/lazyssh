@@ -73,6 +73,7 @@ fn run_tui_until_action(
     let mut terminal = Terminal::new(backend)?;
 
     let mut last_frame = Instant::now();
+    let mut clicks = input::Clicks::default();
 
     let action = loop {
         terminal.draw(|frame| ui::render(frame, app))?;
@@ -81,7 +82,7 @@ fn run_tui_until_action(
         // were already on screen: with none, the loop sits in a blocking read
         // and that whole wait would otherwise expire the toast it wakes up for
         let animating = app.has_toasts();
-        input::handle_next_event(app, ssh_repo, theme_repo)?;
+        input::handle_next_event(app, ssh_repo, theme_repo, &mut clicks)?;
 
         let now = Instant::now();
         if animating {
