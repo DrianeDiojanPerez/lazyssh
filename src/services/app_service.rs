@@ -123,6 +123,14 @@ impl AppService {
         }
     }
 
+    /// Puts the cursor on a host by position in the visible list, which is what
+    /// a click on a card asks for.
+    pub fn select(&mut self, index: usize) {
+        if index < self.visible_hosts().len() {
+            self.cursor = index;
+        }
+    }
+
     pub fn jump_to_top(&mut self) {
         self.cursor = 0;
     }
