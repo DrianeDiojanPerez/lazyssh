@@ -11,8 +11,9 @@ use crate::services::AppService;
 
 const MAX_WIDTH: u16 = 56;
 const MIN_WIDTH: u16 = 34;
-/// Two borders, the title, its divider and two lines for the message.
-const HEIGHT: u16 = 6;
+/// Two borders, the title and its divider, before the message is counted.
+const CHROME: u16 = 4;
+const MESSAGE_ROWS: usize = 2;
 const GAP: u16 = 1;
 
 /// Toasts float in the very top right corner of the screen, newest underneath,
@@ -21,30 +22,46 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     let mut top = area.y;
 
     for toast in &app.toasts {
-        if top + HEIGHT > area.bottom() {
+        let (width, height) = size(toast, area.width);
+        if top + height > area.bottom() {
             break;
         }
 
-        draw_one(frame, app, toast, area, top);
-        top += HEIGHT + GAP;
+        draw_one(frame, app, toast, area, top, width, height);
+        top += height + GAP;
     }
 }
 
-fn draw_one(frame: &mut Frame, app: &AppService, toast: &Toast, area: Rect, top: u16) {
-    let t = &app.theme;
-
-    // the filled circle glyphs nvim-notify uses, so the icon reads as a badge
-    let (icon, title, color) = match toast.kind {
-        ToastKind::Success => ("\u{f05a}", "Success", &t.success),
-        ToastKind::Error => ("\u{f057}", "Error", &t.error),
-    };
-
-    let heading = format!("{} {}", icon, title);
-    let content = (heading.chars().count() + toast.at.chars().count() + 2)
+/// How much room a toast asks for. The height follows the message, so a short
+/// one does not sit above a blank row.
+fn size(toast: &Toast, available: u16) -> (u16, u16) {
+    let heading = toast.kind.title().chars().count() + 2;
+    let content = (heading + toast.at.chars().count() + 2)
         .max(toast.message.chars().count().min(MAX_WIDTH as usize));
 
     // the borders and a column of air on each side
-    let full_width = (content as u16 + 4).clamp(MIN_WIDTH, MAX_WIDTH).min(area.width);
+    let width = (content as u16 + 4).clamp(MIN_WIDTH, MAX_WIDTH).min(available);
+    let rows = wrap(&toast.message, width.saturating_sub(4) as usize, MESSAGE_ROWS).len();
+
+    (width, CHROME + rows.max(1) as u16)
+}
+
+fn draw_one(
+    frame: &mut Frame,
+    app: &AppService,
+    toast: &Toast,
+    area: Rect,
+    top: u16,
+    full_width: u16,
+    height: u16,
+) {
+    let t = &app.theme;
+
+    let (icon, color) = match toast.kind {
+        ToastKind::Success => ("\u{f05a}", &t.success),
+        ToastKind::Error => ("\u{f057}", &t.error),
+    };
+    let heading = format!("{} {}", icon, toast.kind.title());
 
     // INFO: the corner is fixed and the width is animated, which is as close
     // to sliding in from off screen as a terminal gets
@@ -53,7 +70,7 @@ fn draw_one(frame: &mut Frame, app: &AppService, toast: &Toast, area: Rect, top:
         return;
     }
 
-    let rect = Rect { x: area.right().saturating_sub(width), y: top, width, height: HEIGHT };
+    let rect = Rect { x: area.right().saturating_sub(width), y: top, width, height };
     frame.render_widget(Clear, rect);
 
     // INFO: the whole frame takes the level colour, which is what makes a
@@ -79,7 +96,7 @@ fn draw_one(frame: &mut Frame, app: &AppService, toast: &Toast, area: Rect, top:
         // run into the side borders instead of stopping short of them
         Line::from(""),
     ];
-    for line in wrap(&toast.message, text_width, 2) {
+    for line in wrap(&toast.message, text_width, MESSAGE_ROWS) {
         lines.push(Line::from(Span::styled(line, t.base().add_modifier(Modifier::BOLD))));
     }
 
