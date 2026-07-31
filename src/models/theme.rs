@@ -92,6 +92,14 @@ impl Theme {
             .bg(if self.transparent { Color::Reset } else { self.status_bar_bg.to_color() })
     }
 
+    /// A chip that sits back: it keeps a surface of its own, so it still reads
+    /// as something you can pick, without competing with the one in front.
+    pub fn surface(&self) -> Style {
+        Style::default()
+            .fg(self.muted.to_color())
+            .bg(self.selected_bg.to_color())
+    }
+
     /// The lamp on a card that answered, which wants the success colour
     /// without the background the other styles carry.
     pub fn success_dot(&self) -> Style {
