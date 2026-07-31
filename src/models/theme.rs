@@ -96,8 +96,8 @@ impl Theme {
     /// as something you can pick, without competing with the one in front.
     pub fn surface(&self) -> Style {
         Style::default()
-            .fg(self.muted.to_color())
-            .bg(self.selected_bg.to_color())
+            .fg(self.fg.to_color())
+            .bg(self.input_bg.to_color())
     }
 
     /// The lamp on a card that answered, which wants the success colour

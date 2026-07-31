@@ -517,7 +517,7 @@ mod tests {
         );
         assert_eq!(
             filled(&screen, "Whole terminal"),
-            Some(app.theme.selected_bg.to_color()),
+            Some(app.theme.input_bg.to_color()),
             "the other answer should sit back on its own surface:\n{}",
             screen
         );
