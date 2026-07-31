@@ -60,6 +60,13 @@ impl Theme {
         Style::default().fg(self.border_focused.to_color()).bg(self.background())
     }
 
+    pub fn selected(&self) -> Style {
+        Style::default()
+            .fg(self.selected_fg.to_color())
+            .bg(self.selected_bg.to_color())
+            .add_modifier(Modifier::BOLD)
+    }
+
     pub fn header(&self) -> Style {
         Style::default()
             .fg(self.header_fg.to_color())
@@ -67,10 +74,12 @@ impl Theme {
             .add_modifier(Modifier::BOLD)
     }
 
-    pub fn selected(&self) -> Style {
+    /// A badge: the theme background written on top of a solid colour, so a
+    /// short label reads as a filled chip rather than as more text.
+    pub fn pill(&self, color: &Rgb) -> Style {
         Style::default()
-            .fg(self.selected_fg.to_color())
-            .bg(self.selected_bg.to_color())
+            .fg(self.bg.to_color())
+            .bg(color.to_color())
             .add_modifier(Modifier::BOLD)
     }
 
