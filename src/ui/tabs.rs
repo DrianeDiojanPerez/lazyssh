@@ -10,9 +10,9 @@ use crate::services::AppService;
 
 const CLOSE: &str = "×";
 
-/// The powerline half circles that round a tab off at each end.
-const LEFT_CAP: &str = "\u{e0b6}";
-const RIGHT_CAP: &str = "\u{e0b4}";
+/// The powerline points that finish a tab off at each end.
+const LEFT_CAP: &str = "\u{e0b2}";
+const RIGHT_CAP: &str = "\u{e0b0}";
 
 /// What a click on the tab bar meant.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -88,8 +88,8 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     frame.render_widget(Paragraph::new(Line::from(spans)).style(t.base()), area);
 }
 
-/// A label with both ends rounded off. The caps are drawn in the colour the
-/// pill is filled with, on the page behind it, which is what rounds them.
+/// A label with both ends brought to a point. The caps are drawn in the colour
+/// the tab is filled with, on the page behind it, which is what shapes them.
 fn pill<'a>(
     label: &str,
     colour: ratatui::style::Color,
