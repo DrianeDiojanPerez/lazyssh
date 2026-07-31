@@ -17,9 +17,6 @@ fn badge_width() -> u16 {
     BADGE.chars().count() as u16 + 2
 }
 
-/// The powerline point that finishes the label off on its right.
-const ARROW: &str = "\u{e0b0}";
-
 /// The half triangles that slant a tab off at each end.
 const TAB_LEFT: &str = "\u{e0ba}";
 const TAB_RIGHT: &str = "\u{e0b8}";
@@ -100,7 +97,7 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     frame.render_widget(Paragraph::new(Line::from(spans)).style(t.base()), area);
 }
 
-/// The row's label, brought to a point on its right.
+/// The row's label, slanted on its right the same way a tab is.
 fn label_pill<'a>(
     label: &str,
     colour: ratatui::style::Color,
@@ -109,7 +106,7 @@ fn label_pill<'a>(
 ) -> Vec<Span<'a>> {
     vec![
         Span::styled(label.to_string(), fill),
-        Span::styled(ARROW, t.base().fg(colour)),
+        Span::styled(TAB_RIGHT, t.base().fg(colour)),
         Span::raw(" "),
     ]
 }
