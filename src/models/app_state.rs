@@ -126,6 +126,7 @@ pub enum Setting {
     Theme,
     Transparency,
     TabEdges,
+    TabPanel,
 }
 
 impl Setting {
@@ -134,6 +135,7 @@ impl Setting {
         rows.push(Self::Theme);
         rows.push(Self::Transparency);
         rows.push(Self::TabEdges);
+        rows.push(Self::TabPanel);
         rows
     }
 
@@ -149,7 +151,7 @@ impl Setting {
     pub fn at_line(line: u16) -> Option<usize> {
         match line {
             1..=3 => Some(line as usize - 1),
-            6..=8 => Some(line as usize - 3),
+            6..=9 => Some(line as usize - 3),
             _ => None,
         }
     }
@@ -160,6 +162,7 @@ impl Setting {
             Self::Theme => "Theme",
             Self::Transparency => "Transparency",
             Self::TabEdges => "Slanted tabs",
+            Self::TabPanel => "Tabs in a panel",
         }
     }
 }

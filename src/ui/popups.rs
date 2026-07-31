@@ -534,7 +534,7 @@ fn choice<'a>(label: &'a str, is_picked: bool, t: &crate::models::Theme) -> Span
 }
 
 fn settings_area(body: Rect) -> Rect {
-    centered(56, 14, body)
+    centered(56, 15, body)
 }
 
 /// Which setting a click landed on.
@@ -568,7 +568,7 @@ pub fn draw_settings(frame: &mut Frame, app: &AppService, body: Rect) {
 
     // INFO: rows are placed by the same line numbers the mouse looks them up
     // by, so a click can never land a row away from what it points at
-    let mut lines = vec![Line::from(""); 11];
+    let mut lines = vec![Line::from(""); 12];
     lines[0] = Line::from(Span::styled("When you connect to a host", t.muted()));
     lines[5] = Line::from(Span::styled("Look", t.muted()));
 
@@ -580,6 +580,7 @@ pub fn draw_settings(frame: &mut Frame, app: &AppService, body: Rect) {
             Setting::Theme => app.theme.name.clone(),
             Setting::Transparency => on_or_off(app.theme.transparent),
             Setting::TabEdges => on_or_off(app.tab_edges()),
+            Setting::TabPanel => on_or_off(app.tab_panel()),
         };
 
         let label = setting.label();
@@ -593,7 +594,7 @@ pub fn draw_settings(frame: &mut Frame, app: &AppService, body: Rect) {
         ]);
     }
 
-    lines[10] = Line::from(vec![
+    lines[11] = Line::from(vec![
         Span::styled("  ↑↓", t.bold_accent()),
         Span::styled(" browse  ", t.muted()),
         Span::styled("Enter", t.bold_accent()),

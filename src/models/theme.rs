@@ -152,6 +152,13 @@ pub struct ThemePreference {
     /// Tabs are plain blocks unless this is turned on.
     #[serde(default)]
     pub tab_edges: bool,
+    /// Tabs live in a panel of their own unless this is turned off.
+    #[serde(default = "yes")]
+    pub tab_panel: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn ask_first() -> LaunchStyle {
@@ -165,6 +172,7 @@ impl Default for ThemePreference {
             transparent: false,
             launch_style: LaunchStyle::Ask,
             tab_edges: false,
+            tab_panel: true,
         }
     }
 }
