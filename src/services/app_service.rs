@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::models::{Action, FormField, Mode, SshHost, Theme, ThemePreference, Toast};
+use crate::models::{Action, Focus, FormField, Mode, SshHost, Theme, ThemePreference, Toast};
 use crate::repositories::{SshRepository, ThemeRepository};
+use crate::services::{Probes, Session};
 
 const MAX_TOASTS: usize = 3;
 
@@ -36,6 +37,16 @@ pub struct AppService {
     // form rather than in a toast that flies away
     pub form_error: Option<String>,
     pub pending_action: Action,
+
+    // INFO: connections stay open in tabs, so the app is the terminal these
+    // sessions live in rather than something that steps aside for them
+    // INFO: who answered on their ssh port, kept beside the hosts so a card
+    // can say at a glance whether it is worth pressing Enter on
+    pub probes: Probes,
+    pub sessions: Vec<Session>,
+    pub active_tab: Option<usize>,
+    pub focus: Focus,
+    pub sidebar_open: bool,
 }
 
 impl AppService {
@@ -54,6 +65,8 @@ impl AppService {
         theme.transparent = preference.transparent;
 
         let host_count = hosts.len();
+        let probes = Probes::default();
+        probes.check_all(&hosts);
 
         Self {
             preamble,
@@ -79,6 +92,12 @@ impl AppService {
             toasts: Vec::new(),
             form_error: None,
             pending_action: Action::Continue,
+
+            probes,
+            sessions: Vec::new(),
+            active_tab: None,
+            focus: Focus::Sidebar,
+            sidebar_open: true,
         }
     }
 
@@ -347,10 +366,116 @@ impl AppService {
 
     // ─── SSH Execution ───────────────────────────────────────────────────
 
-    pub fn launch_ssh(&mut self) {
-        if let Some(host) = self.selected_host() {
-            self.pending_action = Action::LaunchSsh(host.as_ssh_args());
+    /// Opens the selected host in a tab of its own and hands it the keyboard.
+    /// A host already open is brought forward instead of dialled twice.
+    pub fn open_session(&mut self, rows: u16, columns: u16) {
+        let Some(host) = self.selected_host() else {
+            return;
+        };
+
+        let alias = host.alias.clone();
+        if let Some(index) = self.sessions.iter().position(|s| s.alias == alias) {
+            self.select_tab(index);
+            return;
         }
+
+        match Session::open(&alias, &host.as_ssh_args(), rows, columns) {
+            Ok(session) => {
+                self.sessions.push(session);
+                self.select_tab(self.sessions.len() - 1);
+                self.toast(Toast::success(format!("Connected to '{}'", alias)));
+            }
+            Err(message) => self.toast(Toast::error(message)),
+        }
+    }
+
+    pub fn select_tab(&mut self, index: usize) {
+        if index < self.sessions.len() {
+            self.active_tab = Some(index);
+            self.focus = Focus::Session;
+        }
+    }
+
+    pub fn close_tab(&mut self, index: usize) {
+        if index >= self.sessions.len() {
+            return;
+        }
+
+        self.sessions.remove(index);
+        self.active_tab = match self.sessions.len() {
+            0 => None,
+            len => Some(self.active_tab.unwrap_or(0).min(len - 1)),
+        };
+
+        if self.active_tab.is_none() {
+            self.focus = Focus::Sidebar;
+        }
+    }
+
+    pub fn close_active_tab(&mut self) {
+        if let Some(index) = self.active_tab {
+            self.close_tab(index);
+        }
+    }
+
+    pub fn next_tab(&mut self) {
+        if let Some(index) = self.active_tab {
+            self.select_tab((index + 1) % self.sessions.len());
+        }
+    }
+
+    pub fn active_session(&self) -> Option<&Session> {
+        self.sessions.get(self.active_tab?)
+    }
+
+    pub fn active_session_mut(&mut self) -> Option<&mut Session> {
+        self.sessions.get_mut(self.active_tab?)
+    }
+
+    pub fn has_live_session(&self) -> bool {
+        self.sessions.iter().any(|session| session.is_running())
+    }
+
+    /// Closing the sidebar hands the keyboard to the session, and opening it
+    /// takes it back, so one key does the whole move.
+    pub fn toggle_sidebar(&mut self) {
+        self.sidebar_open = !self.sidebar_open;
+        self.focus = if self.sidebar_open || self.active_tab.is_none() {
+            Focus::Sidebar
+        } else {
+            Focus::Session
+        };
+    }
+
+    pub fn focus_sidebar(&mut self) {
+        self.focus = Focus::Sidebar;
+        if !self.sidebar_open {
+            self.sidebar_open = true;
+        }
+    }
+
+    pub fn focus_session(&mut self) {
+        if self.active_tab.is_some() {
+            self.focus = Focus::Session;
+        }
+    }
+
+    /// Walks the active session back through its scrollback, for the wheel.
+    pub fn scroll_session_back(&mut self, lines: i32) {
+        let Some(session) = self.active_session() else {
+            return;
+        };
+
+        let Ok(mut parser) = session.screen.lock() else {
+            return;
+        };
+
+        let current = parser.screen().scrollback() as i32;
+        parser.screen_mut().set_scrollback((current + lines).max(0) as usize);
+    }
+
+    pub fn is_session_focused(&self) -> bool {
+        self.focus == Focus::Session && self.active_tab.is_some()
     }
 
     // ─── Form Editing ────────────────────────────────────────────────────
@@ -556,6 +681,7 @@ impl AppService {
         self.preamble = preamble;
         self.hosts = hosts;
         self.rebuild_filter();
+        self.probes.check_all(&self.hosts);
         self.toast(Toast::success(format!("Reloaded ({} hosts)", self.hosts.len())));
     }
 

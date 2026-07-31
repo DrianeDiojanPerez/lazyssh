@@ -79,7 +79,6 @@ impl FormField {
 pub enum Action {
     Continue,
     Quit,
-    LaunchSsh(Vec<String>),
 }
 
 /// Whether a host answered on its ssh port the last time it was tried.

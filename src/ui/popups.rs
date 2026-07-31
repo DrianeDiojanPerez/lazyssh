@@ -437,11 +437,11 @@ pub fn draw_help(frame: &mut Frame, app: &AppService, body: Rect) {
         ("↑ / k", "move up"),
         ("↓ / j", "move down"),
         ("g / G", "top / bottom"),
-        ("/", "search hosts"),
+        ("/", "filter hosts"),
         ("Esc", "clear the filter"),
         ("", ""),
         ("Hosts", ""),
-        ("Enter", "connect"),
+        ("Enter", "open a tab"),
         ("a", "add a host"),
         ("e", "edit selected"),
         ("d", "delete selected"),
@@ -449,6 +449,10 @@ pub fn draw_help(frame: &mut Frame, app: &AppService, body: Rect) {
     ];
 
     let right = [
+        ("Sessions", ""),
+        ("n / w", "next / close tab"),
+        ("C-b", "sidebar on and off"),
+        ("", ""),
         ("Form", ""),
         ("Tab", "next field"),
         ("S-Tab", "previous field"),
@@ -458,10 +462,6 @@ pub fn draw_help(frame: &mut Frame, app: &AppService, body: Rect) {
         ("Look", ""),
         ("t", "pick a theme"),
         ("T", "transparency"),
-        ("", ""),
-        ("Other", ""),
-        ("c", "show ssh command"),
-        ("q", "quit"),
     ];
 
     let rows = left.len().max(right.len());
@@ -494,9 +494,15 @@ pub fn draw_help(frame: &mut Frame, app: &AppService, body: Rect) {
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
         Span::styled("Mouse", t.bold_accent()),
-        Span::styled("  click selects, double click connects, the wheel scrolls", t.muted()),
+        Span::styled("  click anything: hints, tabs, cards, fields, buttons", t.muted()),
     ]));
-    lines.push(Line::from(Span::styled("Esc closes this help", t.muted())));
+    lines.push(Line::from(vec![
+        Span::styled("c", t.bold_accent()),
+        Span::styled(" ssh command   ", t.muted()),
+        Span::styled("q", t.bold_accent()),
+        Span::styled(" quit   ", t.muted()),
+        Span::styled("Esc closes this help", t.muted()),
+    ]));
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }

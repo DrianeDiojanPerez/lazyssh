@@ -9,50 +9,67 @@ use crate::services::AppService;
 
 use super::panels;
 use super::popups;
+use super::session;
+use super::tabs;
 use super::toasts;
 
 /// Where each part of the screen sits. Worked out once so that drawing and
 /// mouse hit testing can never disagree about what is where.
 pub struct Frames {
-    pub body: Rect,
-    pub search: Option<Rect>,
-    pub list: Rect,
-    pub details: Rect,
     pub header: Rect,
+    pub tabs: Option<Rect>,
+    pub body: Rect,
+    pub sidebar: Option<Rect>,
+    pub search: Rect,
+    pub list: Rect,
+    pub main: Rect,
     pub status: Rect,
 }
 
-pub fn frames(area: Rect, searching: bool) -> Frames {
+/// The sidebar is a fixed strip rather than a share of the width, so the
+/// session beside it keeps its size as the window grows.
+const SIDEBAR: u16 = 40;
+
+pub fn frames(app: &AppService, area: Rect) -> Frames {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(2),
+            Constraint::Length(if app.sessions.is_empty() { 0 } else { 1 }),
             Constraint::Min(5),
             Constraint::Length(1),
         ])
         .split(area);
 
+    let body = rows[2];
+    let width = if app.sidebar_open {
+        SIDEBAR.min(body.width.saturating_sub(20)).max(0)
+    } else {
+        0
+    };
+
     let columns = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
-        .spacing(1)
-        .split(rows[1]);
+        .constraints([Constraint::Length(width), Constraint::Min(10)])
+        .spacing(if width > 0 { 1 } else { 0 })
+        .split(body);
 
-    let left = Layout::default()
+    // the filter box lives at the top of the sidebar and stays there, so the
+    // list never jumps when a search begins
+    let sidebar = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(if searching { 3 } else { 0 }),
-            Constraint::Min(5),
-        ])
+        .constraints([Constraint::Length(3), Constraint::Min(3)])
         .split(columns[0]);
 
     Frames {
-        body: rows[1],
-        search: searching.then_some(left[0]),
-        list: left[1],
-        details: columns[1],
         header: rows[0],
-        status: rows[2],
+        tabs: (!app.sessions.is_empty()).then_some(rows[1]),
+        body,
+        sidebar: (width > 0).then_some(columns[0]),
+        search: sidebar[0],
+        list: sidebar[1],
+        main: columns[1],
+        status: rows[3],
     }
 }
 
@@ -61,14 +78,22 @@ pub fn render(frame: &mut Frame, app: &AppService) {
 
     frame.render_widget(Block::default().style(app.theme.base()), area);
 
-    let frames = frames(area, app.mode == Mode::Search);
+    let frames = frames(app, area);
 
     panels::draw_header(frame, app, frames.header);
-    if let Some(search) = frames.search {
-        panels::draw_search_bar(frame, app, search);
+    if let Some(tabs) = frames.tabs {
+        tabs::draw(frame, app, tabs);
     }
-    panels::draw_host_list(frame, app, frames.list);
-    panels::draw_detail_panel(frame, app, frames.details);
+    if frames.sidebar.is_some() {
+        panels::draw_search_bar(frame, app, frames.search);
+        panels::draw_host_list(frame, app, frames.list);
+    }
+
+    match app.active_session() {
+        Some(session) => session::draw(frame, app, session, frames.main),
+        None => panels::draw_detail_panel(frame, app, frames.main),
+    }
+
     panels::draw_status_bar(frame, app, frames.status);
 
     // INFO: toasts belong to the screen, not to the panels, so they hang in
@@ -216,7 +241,7 @@ mod tests {
     #[test]
     fn the_status_bar_hints_are_buttons() {
         let (app, _repo) = app_with(hosts(3));
-        let frames = super::frames(Rect::new(0, 0, 80, 24), false);
+        let frames = super::frames(&app, Rect::new(0, 0, 80, 24));
         let screen = screenshot::draw(&app, 80, 24);
         let bar = frames.status.y;
 
@@ -241,7 +266,7 @@ mod tests {
         let (mut app, _repo) = app_with(hosts(3));
         app.begin_add();
 
-        let body = super::frames(Rect::new(0, 0, 80, 24), false).body;
+        let body = super::frames(&app, Rect::new(0, 0, 80, 24)).body;
         let screen = screenshot::draw(&app, 80, 24);
 
         let row = row_of(&screen, "Port  default 22");
@@ -273,7 +298,7 @@ mod tests {
         let (mut app, _repo) = app_with(hosts(3));
         app.begin_delete();
 
-        let body = super::frames(Rect::new(0, 0, 80, 24), false).body;
+        let body = super::frames(&app, Rect::new(0, 0, 80, 24)).body;
         let screen = screenshot::draw(&app, 80, 24);
         // the title says "Delete host" too, so the buttons are found by the
         // one word that only appears on their row
@@ -299,7 +324,7 @@ mod tests {
         app.begin_add();
         app.form_field = crate::models::FormField::IdentityFile;
 
-        let body = super::frames(Rect::new(0, 0, 80, 24), false).body;
+        let body = super::frames(&app, Rect::new(0, 0, 80, 24)).body;
         let screen = screenshot::draw(&app, 80, 24);
         let row = row_of(&screen, "~/.ssh/id_rsa");
         let column = column_of(&screen, row, "~/.ssh/id_rsa");
@@ -312,15 +337,92 @@ mod tests {
         );
     }
 
+    fn settle(done: impl Fn() -> bool) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !done() {
+            assert!(std::time::Instant::now() < deadline, "nothing settled in time");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn the_filter_is_on_screen_before_anyone_asks_for_it() {
+        let (app, _repo) = app_with(hosts(3));
+
+        let screen = screenshot::draw(&app, 80, 24);
+
+        assert!(screen.contains("Filter"), "the filter box is missing:\n{}", screen);
+        assert!(
+            screen.contains("type to narrow the list"),
+            "the empty filter says nothing:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn shutting_the_sidebar_gives_its_room_to_the_rest() {
+        let (mut app, _repo) = app_with(hosts(3));
+        let area = Rect::new(0, 0, 80, 24);
+
+        let open = super::frames(&app, area);
+        app.toggle_sidebar();
+        let shut = super::frames(&app, area);
+
+        assert!(open.sidebar.is_some(), "the sidebar starts open");
+        assert!(shut.sidebar.is_none(), "the sidebar should be gone");
+        assert!(
+            shut.main.width > open.main.width,
+            "the main pane should have taken the room: {} then {}",
+            open.main.width,
+            shut.main.width
+        );
+        assert!(!screenshot::draw(&app, 80, 24).contains("Filter"));
+    }
+
+    #[test]
+    fn an_open_session_takes_a_tab_and_the_main_pane() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.sessions.push(
+            crate::services::Session::spawn(
+                "server-01",
+                "echo",
+                &["connected".to_string()],
+                20,
+                40,
+            )
+            .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+
+        settle(|| screenshot::draw(&app, 100, 20).contains("connected"));
+
+        let screen = screenshot::draw(&app, 100, 20);
+        let frames = super::frames(&app, Rect::new(0, 0, 100, 20));
+        let tabs = frames.tabs.expect("an open session should raise the tab bar");
+
+        assert_eq!(
+            crate::ui::tabs::tab_at(&app, tabs, column_of(&screen, tabs.y, "server-01"), tabs.y),
+            Some(crate::ui::tabs::TabHit::Select(0)),
+            "clicking the tab should pick it:\n{}",
+            screen
+        );
+        assert_eq!(
+            crate::ui::tabs::tab_at(&app, tabs, column_of(&screen, tabs.y, "×"), tabs.y),
+            Some(crate::ui::tabs::TabHit::Close(0)),
+            "clicking the cross should close it:\n{}",
+            screen
+        );
+    }
+
     #[test]
     fn a_click_picks_the_card_it_lands_on() {
         let (mut app, _repo) = app_with(hosts(40));
         app.jump_to_bottom();
 
-        let list = super::frames(Rect::new(0, 0, 80, 24), false).list;
+        let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
         let screen = screenshot::draw(&app, 80, 24);
         let drawn = alias_rows(&screen);
-        assert!(drawn.len() > 3, "expected a full panel of cards:\n{}", screen);
+        assert!(drawn.len() > 2, "expected a panel full of cards:\n{}", screen);
 
         for (row, index) in drawn {
             assert_eq!(
@@ -338,7 +440,7 @@ mod tests {
     fn a_click_on_empty_space_picks_nothing() {
         let (app, _repo) = app_with(hosts(2));
 
-        let list = super::frames(Rect::new(0, 0, 80, 24), false).list;
+        let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
 
         assert_eq!(
             crate::ui::panels::host_at(&app, list, list.x + 2, list.bottom() - 2),
@@ -359,7 +461,7 @@ mod tests {
 
         let screen = screenshot::draw(&app, 80, 24);
         let buffer = screenshot::buffer(&app, 80, 24);
-        let list = super::frames(Rect::new(0, 0, 80, 24), false).list;
+        let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
 
         let edge_of = |alias: &str| {
             let row = row_of(&screen, alias) - 1;

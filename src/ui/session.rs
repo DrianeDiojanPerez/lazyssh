@@ -1,0 +1,86 @@
+use ratatui::{
+    layout::Rect,
+    style::{Color, Modifier, Style},
+    text::Span,
+    widgets::{Block, BorderType, Borders},
+    Frame,
+};
+
+use crate::services::{AppService, Session};
+
+/// Paints what the remote end has drawn. The pty is kept the same size as this
+/// pane, so the two agree on where everything is without any reflowing here.
+pub fn draw(frame: &mut Frame, app: &AppService, session: &Session, area: Rect) {
+    let t = &app.theme;
+    let focused = app.is_session_focused();
+
+    let title = if session.is_running() {
+        format!(" {} ", session.alias)
+    } else {
+        format!(" {} · ended, w closes it ", session.alias)
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(if focused { t.border_focused() } else { t.border() })
+        .title(Span::styled(title, if focused { t.title() } else { t.muted() }))
+        .style(t.base());
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let Ok(parser) = session.screen.lock() else {
+        return;
+    };
+    let screen = parser.screen();
+
+    let buffer = frame.buffer_mut();
+    for row in 0..inner.height {
+        for column in 0..inner.width {
+            let Some(cell) = screen.cell(row, column) else {
+                continue;
+            };
+
+            let target = buffer.get_mut(inner.x + column, inner.y + row);
+            let contents = cell.contents();
+
+            target.set_symbol(if contents.is_empty() { " " } else { &contents });
+            target.set_style(style_of(cell));
+        }
+    }
+
+    if focused && !screen.hide_cursor() {
+        let (row, column) = screen.cursor_position();
+        if row < inner.height && column < inner.width {
+            frame.set_cursor(inner.x + column, inner.y + row);
+        }
+    }
+}
+
+fn style_of(cell: &vt100::Cell) -> Style {
+    let mut style = Style::default().fg(color_of(cell.fgcolor())).bg(color_of(cell.bgcolor()));
+
+    if cell.bold() {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    if cell.italic() {
+        style = style.add_modifier(Modifier::ITALIC);
+    }
+    if cell.underline() {
+        style = style.add_modifier(Modifier::UNDERLINED);
+    }
+    if cell.inverse() {
+        style = style.add_modifier(Modifier::REVERSED);
+    }
+
+    style
+}
+
+fn color_of(color: vt100::Color) -> Color {
+    match color {
+        vt100::Color::Default => Color::Reset,
+        vt100::Color::Idx(index) => Color::Indexed(index),
+        vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+    }
+}

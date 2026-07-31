@@ -77,30 +77,37 @@ fn join_while_it_fits<'a>(
 
 pub fn draw_search_bar(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
+    let is_focused = app.mode == Mode::Search;
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(t.border_focused())
-        .title(Span::styled(" Filter ", t.title()))
+        .border_style(if is_focused { t.border_focused() } else { t.border() })
+        .title(Span::styled(" Filter ", if is_focused { t.title() } else { t.muted() }))
         .padding(Padding::new(1, 1, 0, 0))
         .style(t.base());
 
-    let line = if app.search_query.is_empty() {
-        Line::from(vec![
-            Span::styled("/ ", t.accent()),
-            Span::styled("▎", Style::default().fg(t.input_cursor.to_color())),
-            Span::styled(" type to narrow the list", t.muted()),
-        ])
-    } else {
-        Line::from(vec![
-            Span::styled("/ ", t.accent()),
-            Span::styled(&app.search_query, t.base().add_modifier(Modifier::BOLD)),
-            Span::styled("▎", Style::default().fg(t.input_cursor.to_color())),
-        ])
-    };
+    // INFO: the box is always on screen, so it says what it is for when it is
+    // empty and only carries a cursor while it has the keyboard
+    let mut spans = vec![Span::styled("/ ", t.accent())];
 
-    frame.render_widget(Paragraph::new(line).block(block), area);
+    if app.search_query.is_empty() {
+        if is_focused {
+            spans.push(Span::styled("▎", Style::default().fg(t.input_cursor.to_color())));
+        }
+        spans.push(Span::styled(" type to narrow the list", t.muted()));
+    } else {
+        spans.push(Span::styled(&app.search_query, t.base().add_modifier(Modifier::BOLD)));
+        if is_focused {
+            spans.push(Span::styled("▎", Style::default().fg(t.input_cursor.to_color())));
+        }
+        spans.push(Span::styled(
+            format!("   {} of {}", app.visible_hosts().len(), app.host_count()),
+            t.muted(),
+        ));
+    }
+
+    frame.render_widget(Paragraph::new(Line::from(spans)).block(block), area);
 }
 
 /// The panel the cards live in. Built in one place because mouse hit testing
@@ -284,7 +291,21 @@ fn inside<'a>(
     style: Style,
     meta: Option<Span<'a>>,
 ) -> Line<'a> {
-    let taken = meta.as_ref().map_or(0, |m| m.content.chars().count() + 1);
+    inside_many(glyphs, edge, room, text, style, meta.into_iter().collect())
+}
+
+fn inside_many<'a>(
+    glyphs: [&'a str; 7],
+    edge: Style,
+    room: usize,
+    text: &str,
+    style: Style,
+    meta: Vec<Span<'a>>,
+) -> Line<'a> {
+    let taken = match meta.is_empty() {
+        true => 0,
+        false => meta.iter().map(|m| m.content.chars().count()).sum::<usize>() + 1,
+    };
     let text = ellipsize(text, room.saturating_sub(taken));
     let used = text.chars().count() + taken.saturating_sub(1);
 
@@ -293,9 +314,7 @@ fn inside<'a>(
         Span::styled(text, style),
         Span::raw(" ".repeat(room.saturating_sub(used))),
     ];
-    if let Some(meta) = meta {
-        spans.push(meta);
-    }
+    spans.extend(meta);
     spans.push(Span::styled(glyphs[4], edge));
 
     Line::from(spans)
@@ -455,10 +474,10 @@ fn hint_layout(
 
     // INFO: the way out of the current mode is worth more than the rest, so
     // its width is reserved before the others are laid out
-    let escape = escape_hint(&app.mode);
+    let escape = escape_hint(app);
     let reserved = escape.0.chars().count() as u16 + escape.1.chars().count() as u16 + 4;
 
-    for (key, label, code) in hints_for(&app.mode) {
+    for (key, label, code) in hints_for(app) {
         let span = key.chars().count() as u16 + label.chars().count() as u16 + 1;
         if x + span + 3 + reserved > width {
             break;
@@ -474,6 +493,10 @@ fn hint_layout(
 }
 
 fn mode_chip<'a>(app: &AppService) -> Span<'a> {
+    if app.is_session_focused() {
+        return Span::styled(" SESSION ", app.theme.pill(&app.theme.success));
+    }
+
     let label = match &app.mode {
         Mode::Normal => "NORMAL",
         Mode::Search => "SEARCH",
@@ -487,9 +510,13 @@ fn mode_chip<'a>(app: &AppService) -> Span<'a> {
     Span::styled(format!(" {} ", label), app.theme.selected())
 }
 
-/// The one hint that always stays visible: how to leave the current mode.
-fn escape_hint(mode: &Mode) -> (&'static str, &'static str, KeyCode) {
-    match mode {
+/// The one hint that always stays visible: how to leave where you are.
+fn escape_hint(app: &AppService) -> (&'static str, &'static str, KeyCode) {
+    if app.is_session_focused() {
+        return ("C-b", "sidebar", KeyCode::Null);
+    }
+
+    match &app.mode {
         Mode::Normal => ("?", "help", KeyCode::Char('?')),
         Mode::Search => ("Esc", "clear", KeyCode::Esc),
         Mode::AddHost | Mode::EditHost(_) => ("Esc", "cancel", KeyCode::Esc),
@@ -500,18 +527,23 @@ fn escape_hint(mode: &Mode) -> (&'static str, &'static str, KeyCode) {
 
 /// The hints that matter in the current mode, most useful first, so the
 /// status bar degrades sensibly on a narrow terminal.
-fn hints_for(mode: &Mode) -> &'static [(&'static str, &'static str, KeyCode)] {
-    match mode {
+fn hints_for(app: &AppService) -> &'static [(&'static str, &'static str, KeyCode)] {
+    if app.is_session_focused() {
+        return &[("keys", "go to the session", KeyCode::Null)];
+    }
+
+    match &app.mode {
         Mode::Normal => &[
             ("↵", "connect", KeyCode::Enter),
             ("a", "add", KeyCode::Char('a')),
             ("e", "edit", KeyCode::Char('e')),
             ("d", "delete", KeyCode::Char('d')),
-            ("/", "search", KeyCode::Char('/')),
+            ("/", "filter", KeyCode::Char('/')),
             ("q", "quit", KeyCode::Char('q')),
             ("↑↓", "move", KeyCode::Null),
             ("c", "command", KeyCode::Char('c')),
             ("r", "reload", KeyCode::Char('r')),
+            ("w", "close tab", KeyCode::Char('w')),
             ("t", "theme", KeyCode::Char('t')),
             ("T", "transparency", KeyCode::Char('T')),
         ],
