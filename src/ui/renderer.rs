@@ -499,23 +499,32 @@ mod tests {
 
         let body = super::frames(&app, Rect::new(0, 0, 84, 22)).body;
         let screen = screenshot::draw(&app, 84, 22);
-        let row = row_of(&screen, " In a tab ");
+        let row = row_of(&screen, "In a tab");
 
+        assert!(
+            screen.contains("▸ In a tab"),
+            "the answer under the cursor is not marked:\n{}",
+            screen
+        );
         assert_eq!(
-            crate::ui::popups::launch_button_at(body, column_of(&screen, row, " In a tab ") + 1, row),
+            crate::ui::popups::launch_button_at(body, column_of(&screen, row, "In a tab"), row),
             Some(crate::ui::popups::LaunchButton::Tab),
             "the tab button is not where it is drawn:\n{}",
             screen
         );
         assert_eq!(
-            crate::ui::popups::launch_button_at(
-                body,
-                column_of(&screen, row, " Whole terminal ") + 1,
-                row
-            ),
+            crate::ui::popups::launch_button_at(body, column_of(&screen, row, "Whole terminal"), row),
             Some(crate::ui::popups::LaunchButton::FullScreen),
             "the full screen button is not where it is drawn:\n{}",
             screen
+        );
+
+        app.launch_cursor_right();
+        let moved = screenshot::draw(&app, 84, 22);
+        assert!(
+            moved.contains("▸ Whole terminal"),
+            "the arrows should move the marker:\n{}",
+            moved
         );
     }
 

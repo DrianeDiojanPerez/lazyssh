@@ -429,8 +429,13 @@ pub fn draw_theme_selector(frame: &mut Frame, app: &AppService, body: Rect) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-const TAB: &str = " In a tab ";
-const FULL: &str = " Whole terminal ";
+const TAB: &str = "In a tab";
+const FULL: &str = "Whole terminal";
+
+/// Room for the marker, the label and a space on each side.
+fn choice_width(label: &str) -> u16 {
+    label.chars().count() as u16 + 4
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LaunchButton {
@@ -442,14 +447,14 @@ fn launch_buttons(body: Rect) -> (Rect, Rect, Rect) {
     let area = centered(58, 10, body);
     let inner = choice_block().inner(area);
 
-    let width = TAB.len() as u16 + FULL.len() as u16 + 2;
+    let width = choice_width(TAB) + choice_width(FULL) + 2;
     let x = inner.x + inner.width.saturating_sub(width) / 2;
     let y = inner.y + 4;
 
     (
         area,
-        Rect { x, y, width: TAB.len() as u16, height: 1 },
-        Rect { x: x + TAB.len() as u16 + 2, y, width: FULL.len() as u16, height: 1 },
+        Rect { x, y, width: choice_width(TAB), height: 1 },
+        Rect { x: x + choice_width(TAB) + 2, y, width: choice_width(FULL), height: 1 },
     )
 }
 
@@ -502,16 +507,28 @@ pub fn draw_launch_choice(frame: &mut Frame, app: &AppService, body: Rect) {
         Line::from(""),
         Line::from(vec![
             Span::raw(" ".repeat(lead)),
-            Span::styled(TAB, t.pill(&t.accent)),
+            choice(TAB, app.launch_cursor == 0, t),
             Span::raw("  "),
-            Span::styled(FULL, t.selected()),
+            choice(FULL, app.launch_cursor == 1, t),
         ]),
         Line::from(""),
-        Line::from(Span::styled("t tab   f full screen   s settings   Esc cancel", t.muted()))
-            .alignment(Alignment::Center),
+        Line::from(Span::styled(
+            "← → choose   ↵ open   t or f direct   Esc cancel",
+            t.muted(),
+        ))
+        .alignment(Alignment::Center),
     ]);
 
     frame.render_widget(Paragraph::new(text).block(block), area);
+}
+
+/// The answer under the cursor is filled in and pointed at; the other is left
+/// plain, so there is no doubt which one Enter would take.
+fn choice<'a>(label: &'a str, is_picked: bool, t: &crate::models::Theme) -> Span<'a> {
+    match is_picked {
+        true => Span::styled(format!(" ▸ {} ", label), t.pill(&t.accent)),
+        false => Span::styled(format!("   {} ", label), t.muted()),
+    }
 }
 
 fn settings_area(body: Rect) -> Rect {
