@@ -112,7 +112,7 @@ mod tests {
         let (mut app, _repo) = app_with(hosts(4));
         app.toasts.push(Toast::success("Added 'prod-web'"));
 
-        app.advance_toasts(Duration::from_secs(4));
+        app.advance_toasts(Duration::from_secs(6));
 
         assert!(!app.has_toasts(), "the toast outstayed its lifetime");
         assert!(!screenshot::draw(&app, 80, 18).contains("Added"));

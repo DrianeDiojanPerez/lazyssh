@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 /// How long a toast takes to slide in, and to slide back out again.
-const ENTER: Duration = Duration::from_millis(160);
-const LEAVE: Duration = Duration::from_millis(220);
+const ENTER: Duration = Duration::from_millis(200);
+const LEAVE: Duration = Duration::from_millis(260);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ToastKind {
@@ -36,8 +36,8 @@ impl Toast {
     /// Errors are worth reading twice, so they stay around longer.
     fn lifetime(&self) -> Duration {
         match self.kind {
-            ToastKind::Success => Duration::from_millis(3000),
-            ToastKind::Error => Duration::from_millis(5000),
+            ToastKind::Success => Duration::from_millis(5000),
+            ToastKind::Error => Duration::from_millis(8000),
         }
     }
 
@@ -87,24 +87,24 @@ mod tests {
         assert_eq!(aged(0).openness(), 0.0);
         assert!(aged(80).openness() > 0.0 && aged(80).openness() < 1.0);
         assert_eq!(aged(1000).openness(), 1.0);
-        assert!(aged(2900).openness() < 1.0);
-        assert_eq!(aged(3000).openness(), 0.0);
+        assert!(aged(4900).openness() < 1.0);
+        assert_eq!(aged(5000).openness(), 0.0);
     }
 
     #[test]
     fn a_toast_leaves_once_its_life_runs_out() {
-        assert!(!aged(2999).is_finished());
-        assert!(aged(3000).is_finished());
+        assert!(!aged(4999).is_finished());
+        assert!(aged(5000).is_finished());
 
         let mut error = Toast::error("write failed");
-        error.advance(Duration::from_millis(3000));
+        error.advance(Duration::from_millis(5000));
         assert!(!error.is_finished(), "errors are given longer to be read");
     }
 
     #[test]
     fn the_bar_underneath_empties_over_the_lifetime() {
         assert_eq!(aged(0).remaining(), 1.0);
-        assert_eq!(aged(1500).remaining(), 0.5);
-        assert_eq!(aged(3000).remaining(), 0.0);
+        assert_eq!(aged(2500).remaining(), 0.5);
+        assert_eq!(aged(5000).remaining(), 0.0);
     }
 }
