@@ -85,7 +85,7 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
         let (edge, fill) = match (is_active, app.focus) {
             (true, Focus::Session) => (t.accent(), t.pill(&t.accent)),
             (true, Focus::Sidebar) => (t.accent(), t.selected()),
-            _ => (t.border(), t.muted()),
+            _ => (t.border(), t.surface()),
         };
 
         spans.push(Span::styled("│", edge));

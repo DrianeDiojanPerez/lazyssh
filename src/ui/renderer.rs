@@ -455,6 +455,38 @@ mod tests {
     }
 
     #[test]
+    fn the_tab_you_are_on_is_the_filled_one() {
+        let (mut app, _repo) = app_with(hosts(3));
+        for alias in ["server-01", "server-02"] {
+            app.sessions.push(
+                crate::services::Session::spawn(alias, "true", &[], 20, 40)
+                    .expect("the pty should have started"),
+            );
+        }
+        app.select_tab(0);
+
+        let screen = screenshot::draw(&app, 100, 20);
+        let buffer = screenshot::buffer(&app, 100, 20);
+        let row = super::frames(&app, Rect::new(0, 0, 100, 20)).tabs.y;
+        let background = |alias: &str| {
+            buffer.get(column_of(&screen, row, alias), row).style().bg
+        };
+
+        assert_eq!(
+            background("server-01"),
+            Some(app.theme.accent.to_color()),
+            "the tab you are on should be filled:\n{}",
+            screen
+        );
+        assert_eq!(
+            background("server-02"),
+            Some(app.theme.input_bg.to_color()),
+            "the other tab should sit back on its own surface:\n{}",
+            screen
+        );
+    }
+
+    #[test]
     fn an_open_session_takes_a_tab_and_the_main_pane() {
         let (mut app, _repo) = app_with(hosts(3));
         app.sessions.push(
