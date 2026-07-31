@@ -33,8 +33,9 @@ fn label_row(app: &AppService, area: Rect) -> u16 {
 fn block(app: &AppService) -> Block<'static> {
     let t = &app.theme;
 
+    // INFO: no bottom edge, so the panel below is not underlined twice over
     Block::default()
-        .borders(Borders::ALL)
+        .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
         .border_type(BorderType::Rounded)
         .border_style(t.border())
         .title(Span::styled(" Tabs ", t.muted()))

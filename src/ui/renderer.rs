@@ -35,9 +35,8 @@ pub fn frames(app: &AppService, area: Rect) -> Frames {
         .constraints([
             // INFO: the tab row is always there, empty or not, so opening the
             // first connection does not shove the whole screen down a line,
-            // as a panel it takes the three rows the others do, and as a bare
-            // row it takes one with a blank line under it
-            Constraint::Length(if app.tab_panel() { 3 } else { 2 }),
+            // an edge and a line of tabs as a panel, or the tabs on their own
+            Constraint::Length(if app.tab_panel() { 2 } else { 1 }),
             Constraint::Min(5),
             Constraint::Length(1),
         ])
