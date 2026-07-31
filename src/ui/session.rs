@@ -40,6 +40,9 @@ pub fn draw(frame: &mut Frame, app: &AppService, session: &Session, area: Rect) 
         // INFO: ssh puts its own notices out as lines opening with a star, and
         // says them in plain text; they are worth the warning colour
         let notice = is_notice(screen, row, inner.width);
+        // INFO: a plain shell prompt is the other thing worth picking out of
+        // the wall of text, so the eye can find where each command started
+        let prompt = prompt_end(screen, row, inner.width);
 
         for column in 0..inner.width {
             let Some(cell) = screen.cell(row, column) else {
@@ -50,8 +53,12 @@ pub fn draw(frame: &mut Frame, app: &AppService, session: &Session, area: Rect) 
             let contents = cell.contents();
 
             let mut style = style_of(cell, t);
-            if notice && cell.fgcolor() == vt100::Color::Default {
-                style = style.fg(t.warning.to_color());
+            if cell.fgcolor() == vt100::Color::Default {
+                if notice {
+                    style = style.fg(t.warning.to_color());
+                } else if prompt.is_some_and(|end| column <= end) {
+                    style = style.fg(t.accent.to_color()).add_modifier(Modifier::BOLD);
+                }
             }
 
             target.set_symbol(if contents.is_empty() { " " } else { &contents });
@@ -80,6 +87,26 @@ fn is_notice(screen: &vt100::Screen, row: u16, width: u16) -> bool {
     }
 
     seen.trim_start().starts_with('*')
+}
+
+/// Where a shell prompt ends, if the line opens with one. The name and the
+/// host before the sign are what tell a prompt from a stray dollar in output.
+fn prompt_end(screen: &vt100::Screen, row: u16, width: u16) -> Option<u16> {
+    let mut named = false;
+
+    for column in 0..width {
+        let cell = screen.cell(row, column)?;
+
+        let contents = cell.contents();
+
+        match contents.trim() {
+            "@" => named = true,
+            "$" | "#" if named => return Some(column),
+            _ => {}
+        }
+    }
+
+    None
 }
 
 /// The remote's own colours are kept as they are; what it leaves at the

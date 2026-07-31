@@ -493,6 +493,44 @@ mod tests {
     }
 
     #[test]
+    fn a_session_picks_the_shell_prompt_out() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.sessions.push(
+            crate::services::Session::spawn(
+                "server-01",
+                "printf",
+                &["[dperez@webtool02 ~]$ ls\n".to_string()],
+                20,
+                60,
+            )
+            .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+
+        settle(|| screenshot::draw(&app, 100, 20).contains("webtool02"));
+
+        let screen = screenshot::draw(&app, 100, 20);
+        let buffer = screenshot::buffer(&app, 100, 20);
+        let row = row_of(&screen, "webtool02");
+        let colour = |needle: &str| {
+            buffer.get(column_of(&screen, row, needle), row).style().fg
+        };
+
+        assert_eq!(
+            colour("dperez"),
+            Some(app.theme.accent.to_color()),
+            "the prompt should stand out:\n{}",
+            screen
+        );
+        assert_eq!(
+            colour("ls"),
+            Some(app.theme.fg.to_color()),
+            "what was typed is not part of the prompt:\n{}",
+            screen
+        );
+    }
+
+    #[test]
     fn an_open_session_takes_a_tab_and_the_main_pane() {
         let (mut app, _repo) = app_with(hosts(3));
         app.sessions.push(
