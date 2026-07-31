@@ -17,9 +17,10 @@ fn badge_width() -> u16 {
     BADGE.chars().count() as u16 + 2
 }
 
-/// The half triangles that slant a tab off at each end, both filled along
-/// their bottom edge.
-const TAB_LEFT: &str = "\u{e0b8}";
+/// The half triangles that slant a tab off at each end. The left one cuts away
+/// with a backslash, so the fill runs from the top left corner down to meet the
+/// label, and the right one leans the same way out of it.
+const TAB_LEFT: &str = "\u{e0be}";
 const TAB_RIGHT: &str = "\u{e0b8}";
 
 /// What a click on the tab bar meant.
