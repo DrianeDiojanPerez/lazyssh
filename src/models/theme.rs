@@ -90,6 +90,12 @@ impl Theme {
             .bg(if self.transparent { Color::Reset } else { self.status_bar_bg.to_color() })
     }
 
+    /// The lamp on a card that answered, which wants the success colour
+    /// without the background the other styles carry.
+    pub fn success_dot(&self) -> Style {
+        Style::default().fg(self.success.to_color())
+    }
+
     pub fn error(&self) -> Style {
         Style::default().fg(self.error.to_color()).bg(self.background())
     }

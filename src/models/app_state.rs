@@ -81,3 +81,19 @@ pub enum Action {
     Quit,
     LaunchSsh(Vec<String>),
 }
+
+/// Whether a host answered on its ssh port the last time it was tried.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Reachability {
+    Unknown,
+    Checking,
+    Online,
+    Offline,
+}
+
+/// Which half of the screen the keyboard is talking to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Focus {
+    Sidebar,
+    Session,
+}
