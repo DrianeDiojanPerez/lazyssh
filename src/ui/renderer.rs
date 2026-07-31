@@ -151,6 +151,26 @@ mod tests {
     }
 
     #[test]
+    fn the_toast_divider_meets_both_borders() {
+        let (mut app, _repo) = app_with(hosts(4));
+        app.toasts.push(Toast::success("Added 'prod-web'"));
+        app.advance_toasts(Duration::from_millis(300));
+
+        let screen = screenshot::draw(&app, 80, 18);
+        let divider = screen
+            .lines()
+            .find(|line| line.contains('├'))
+            .unwrap_or_else(|| panic!("the toast has no divider:\n{}", screen));
+
+        assert!(divider.ends_with('┤'), "the divider stops short of the border:\n{}", screen);
+        assert!(
+            !divider.contains("─ ") && !divider.contains(" ─"),
+            "the divider has a gap in it:\n{}",
+            screen
+        );
+    }
+
+    #[test]
     fn a_click_picks_the_card_it_lands_on() {
         let (mut app, _repo) = app_with(hosts(40));
         app.jump_to_bottom();

@@ -74,7 +74,9 @@ fn draw_one(frame: &mut Frame, app: &AppService, toast: &Toast, area: Rect, top:
             ),
             Span::styled(stamp(toast, &heading, text_width), t.muted()),
         ]),
-        Line::from(Span::styled("─".repeat(text_width), t.border())),
+        // the divider is painted straight onto the frame afterwards so it can
+        // run into the side borders instead of stopping short of them
+        Line::from(""),
         Line::from(Span::styled(
             ellipsize(&toast.message, text_width),
             t.base().add_modifier(Modifier::BOLD),
@@ -82,6 +84,7 @@ fn draw_one(frame: &mut Frame, app: &AppService, toast: &Toast, area: Rect, top:
     ];
 
     frame.render_widget(Paragraph::new(lines).block(block), rect);
+    draw_divider(frame, rect, color.to_color());
     draw_life_bar(frame, toast, rect, color.to_color());
 }
 
@@ -94,6 +97,21 @@ fn stamp(toast: &Toast, heading: &str, text_width: usize) -> String {
     }
 
     format!("{:>width$}", toast.at, width = room)
+}
+
+/// Splits the title row off from the message, tying into the side borders and
+/// wearing their colour so the toast reads as one piece.
+fn draw_divider(frame: &mut Frame, rect: Rect, color: ratatui::style::Color) {
+    let style = Style::default().fg(color);
+    let y = rect.y + 2;
+
+    let buffer = frame.buffer_mut();
+    buffer.get_mut(rect.x, y).set_symbol("├").set_style(style);
+    buffer.get_mut(rect.right() - 1, y).set_symbol("┤").set_style(style);
+
+    for x in (rect.x + 1)..(rect.right() - 1) {
+        buffer.get_mut(x, y).set_symbol("─").set_style(style);
+    }
 }
 
 /// The bottom border doubles as the countdown, so the toast shows how long it
