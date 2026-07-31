@@ -361,6 +361,10 @@ impl AppService {
     }
 
     pub fn cancel_mode(&mut self) {
+        // INFO: leaving the picker undoes the preview it was showing
+        if self.mode == Mode::SelectTheme {
+            self.restore_theme();
+        }
         self.mode = Mode::Normal;
     }
 
@@ -626,31 +630,50 @@ impl AppService {
     pub fn theme_cursor_up(&mut self) {
         if self.theme_cursor > 0 {
             self.theme_cursor -= 1;
+            self.preview_theme();
         }
     }
 
     pub fn theme_cursor_down(&mut self) {
         if self.theme_cursor < self.available_themes.len() - 1 {
             self.theme_cursor += 1;
+            self.preview_theme();
+        }
+    }
+
+    /// The theme under the cursor is worn straight away, so the whole screen
+    /// shows what it would look like before anything is committed to.
+    fn preview_theme(&mut self) {
+        if let Some(theme) = self.theme_at(self.theme_cursor) {
+            self.theme = theme;
+        }
+    }
+
+    /// The first theme in the catalog is the one that lets the terminal show
+    /// through, so it is always transparent whatever the preference says.
+    fn theme_at(&self, index: usize) -> Option<Theme> {
+        let mut theme = self.available_themes.get(index)?.clone();
+        theme.transparent = index == 0 || self.theme_preference.transparent;
+        Some(theme)
+    }
+
+    /// Puts back the theme that was in use before the picker was opened.
+    fn restore_theme(&mut self) {
+        if let Some(theme) = self.theme_at(self.theme_preference.theme_index) {
+            self.theme = theme;
         }
     }
 
     pub fn apply_selected_theme(&mut self, theme_repo: &dyn ThemeRepository) {
         let index = self.theme_cursor;
-        if let Some(new_theme) = self.available_themes.get(index) {
-            let mut theme = new_theme.clone();
-            if index == 0 {
-                theme.transparent = true;
-            } else {
-                theme.transparent = self.theme_preference.transparent;
-            }
+        if let Some(theme) = self.theme_at(index) {
+            let name = theme.name.clone();
 
             self.theme = theme;
             self.theme_preference.theme_index = index;
             self.theme_preference.transparent = self.theme.transparent;
             theme_repo.save_preference(&self.theme_preference);
 
-            let name = new_theme.name.clone();
             self.toast(Toast::success(format!("Theme: {}", name)));
         }
         self.mode = Mode::Normal;
@@ -834,6 +857,43 @@ mod tests {
 
         assert_eq!(app.host_count(), 0);
         assert_eq!(app.mode, Mode::AddHost);
+    }
+
+    #[test]
+    fn browsing_themes_wears_them_straight_away() {
+        let (mut app, _repo) = app_with(vec![host("box", 22)]);
+        app.open_theme_selector();
+
+        app.theme_cursor_down();
+
+        assert_eq!(app.theme.name, "other", "the screen should already be wearing it");
+        assert_eq!(
+            app.theme_preference.theme_index, 0,
+            "nothing is saved until it is chosen"
+        );
+    }
+
+    #[test]
+    fn leaving_the_picker_puts_the_old_theme_back() {
+        let (mut app, _repo) = app_with(vec![host("box", 22)]);
+        app.open_theme_selector();
+        app.theme_cursor_down();
+
+        app.cancel_mode();
+
+        assert_eq!(app.theme.name, "stub");
+    }
+
+    #[test]
+    fn choosing_a_theme_keeps_it() {
+        let (mut app, _repo) = app_with(vec![host("box", 22)]);
+        app.open_theme_selector();
+        app.theme_cursor_down();
+
+        app.apply_selected_theme(&crate::test_support::StubThemeRepo);
+
+        assert_eq!(app.theme.name, "other");
+        assert_eq!(app.theme_preference.theme_index, 1);
     }
 
     #[test]
