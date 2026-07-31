@@ -1,7 +1,7 @@
 use ratatui::{
     layout::Rect,
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Block, BorderType, Borders, Padding, Paragraph},
     Frame,
 };
 
@@ -10,22 +10,28 @@ use crate::services::AppService;
 
 const CLOSE: &str = "×";
 
-/// The label the row opens with, in the same shape as the tabs beside it.
-const BADGE: &str = " tabs ";
-
-fn badge_width(app: &AppService) -> u16 {
-    BADGE.chars().count() as u16 + 1 + u16::from(app.tab_edges())
-}
-
 /// The half triangles that slant a tab off at each end. The left one cuts away
 /// with a backslash, so the fill runs from the top left corner down to meet the
 /// label, and the right one leans the same way out of it.
 const TAB_LEFT: &str = "\u{e0be}";
 const TAB_RIGHT: &str = "\u{e0b8}";
 
-/// The tabs sit on the first line of the row, with a blank one under them.
+/// The tabs sit on the one line inside the panel.
 fn label_row(area: Rect) -> u16 {
-    area.y
+    area.y + 1
+}
+
+/// The panel they sit in, titled the way the others are.
+fn block(app: &AppService) -> Block<'static> {
+    let t = &app.theme;
+
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(t.border())
+        .title(Span::styled(" Tabs ", t.muted()))
+        .padding(Padding::horizontal(1))
+        .style(t.base())
 }
 
 /// What a click on the tab bar meant.
@@ -41,7 +47,8 @@ fn layout(app: &AppService) -> Vec<(u16, String, usize)> {
     let mut placed = Vec::new();
     // INFO: the row starts hard against the left edge, so nothing is indented
     // away from the corner of the screen
-    let mut x = badge_width(app);
+    // the border and the padding it carries
+    let mut x = 2;
     let edges = u16::from(app.tab_edges()) * 2;
 
     for (index, session) in app.sessions.iter().enumerate() {
@@ -89,13 +96,7 @@ fn width_of(app: &AppService, label: &str) -> u16 {
 pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
     let edges = app.tab_edges();
-    let mut spans = label_pill(
-        BADGE,
-        t.accent_secondary.to_color(),
-        t.pill(&t.accent_secondary),
-        t,
-        edges,
-    );
+    let mut spans: Vec<Span> = Vec::new();
 
     for (_, label, index) in layout(app) {
         let is_active = app.active_tab == Some(index);
@@ -109,27 +110,7 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
         spans.extend(tab_pill(&label, colour, fill, t, edges));
     }
 
-    let lines = vec![Line::from(spans)];
-    frame.render_widget(Paragraph::new(lines).style(t.base()), area);
-}
-
-/// The row's label, slanted on its right the same way a tab is, and left as a
-/// plain block when the tabs are.
-fn label_pill<'a>(
-    label: &str,
-    colour: ratatui::style::Color,
-    fill: ratatui::style::Style,
-    t: &crate::models::Theme,
-    edges: bool,
-) -> Vec<Span<'a>> {
-    let mut spans = vec![Span::styled(label.to_string(), fill)];
-
-    if edges {
-        spans.push(Span::styled(TAB_RIGHT, t.base().fg(colour)));
-    }
-    spans.push(Span::raw(" "));
-
-    spans
+    frame.render_widget(Paragraph::new(Line::from(spans)).block(block(app)), area);
 }
 
 /// A tab, slanted at both ends. The slants are drawn in the colour the tab is
