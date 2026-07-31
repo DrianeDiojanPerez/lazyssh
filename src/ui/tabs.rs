@@ -10,6 +10,13 @@ use crate::services::AppService;
 
 const CLOSE: &str = "×";
 
+/// The label the row opens with, in the same shape as the tabs beside it.
+const BADGE: &str = " tabs ";
+
+fn badge_width() -> u16 {
+    BADGE.chars().count() as u16 + 3
+}
+
 /// The powerline points that finish a tab off at each end.
 const LEFT_CAP: &str = "\u{e0b2}";
 const RIGHT_CAP: &str = "\u{e0b0}";
@@ -25,7 +32,7 @@ pub enum TabHit {
 /// the mouse both read this, so a tab is always where it was drawn.
 fn layout(app: &AppService) -> Vec<(u16, String, usize)> {
     let mut placed = Vec::new();
-    let mut x = 1;
+    let mut x = 1 + badge_width();
 
     for (index, session) in app.sessions.iter().enumerate() {
         // a session that has ended keeps its tab until it is closed, so the
@@ -72,6 +79,7 @@ fn width_of(label: &str) -> u16 {
 pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
     let mut spans = vec![Span::raw(" ")];
+    spans.extend(pill(BADGE, t.accent_secondary.to_color(), t.pill(&t.accent_secondary), t));
 
     for (_, label, index) in layout(app) {
         let is_active = app.active_tab == Some(index);

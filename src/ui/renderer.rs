@@ -427,10 +427,9 @@ mod tests {
         let screen = screenshot::draw(&app, 100, 20);
         let row = super::frames(&app, Rect::new(0, 0, 100, 20)).tabs.y;
 
-        assert_eq!(
-            screen.lines().nth(row as usize).map(str::trim),
-            Some(""),
-            "an empty tab row should be empty, not gone:\n{}",
+        assert!(
+            screen.lines().nth(row as usize).is_some_and(|line| line.contains("tabs")),
+            "the row should keep its label while it is empty:\n{}",
             screen
         );
     }
