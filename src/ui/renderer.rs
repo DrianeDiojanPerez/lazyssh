@@ -446,7 +446,7 @@ mod tests {
         let (mut app, _repo) = app_with(hosts(3));
 
         assert!(
-            screenshot::draw(&app, 100, 20).contains("tabs"),
+            screenshot::draw(&app, 100, 20).contains("lazyssh  0"),
             "the empty row has lost its label"
         );
 
@@ -456,7 +456,7 @@ mod tests {
         );
         let screen = screenshot::draw(&app, 100, 20);
 
-        assert!(screen.contains("tabs"), "the label should stay:\n{}", screen);
+        assert!(screen.contains("lazyssh  1"), "the label should count the tabs:\n{}", screen);
         assert!(screen.contains("server-01"), "the tab is missing:\n{}", screen);
     }
 

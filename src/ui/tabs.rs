@@ -14,11 +14,14 @@ const CLOSE: &str = "×";
 const LEFT_CAP: &str = "\u{e0b6}";
 const RIGHT_CAP: &str = "\u{e0b4}";
 
-/// The label the row opens with, in the same shape as the tabs beside it.
-const BADGE: &str = " tabs ";
+/// The label the row opens with, in the same shape as the tabs beside it, and
+/// carrying the count so the row says how much is open at a glance.
+fn badge(app: &AppService) -> String {
+    format!(" lazyssh  {} ", app.sessions.len())
+}
 
-fn badge_width() -> u16 {
-    BADGE.chars().count() as u16 + 3
+fn badge_width(app: &AppService) -> u16 {
+    badge(app).chars().count() as u16 + 3
 }
 
 /// What a click on the tab bar meant.
@@ -32,7 +35,7 @@ pub enum TabHit {
 /// the mouse both read this, so a tab is always where it was drawn.
 fn layout(app: &AppService) -> Vec<(u16, String, usize)> {
     let mut placed = Vec::new();
-    let mut x = 1 + badge_width();
+    let mut x = 1 + badge_width(app);
 
     for (index, session) in app.sessions.iter().enumerate() {
         // a session that has ended keeps its tab until it is closed, so the
@@ -80,7 +83,12 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
     let mut spans = vec![Span::raw(" ")];
 
-    spans.extend(pill(BADGE, t.accent_secondary.to_color(), t.pill(&t.accent_secondary), t));
+    spans.extend(pill(
+        &badge(app),
+        t.accent_secondary.to_color(),
+        t.pill(&t.accent_secondary),
+        t,
+    ));
 
     for (_, label, index) in layout(app) {
         let is_active = app.active_tab == Some(index);
