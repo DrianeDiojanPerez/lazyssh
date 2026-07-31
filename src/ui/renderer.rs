@@ -659,9 +659,15 @@ mod tests {
         let (mut app, _repo) = app_with(hosts(3));
         app.open_help();
 
-        let screen = screenshot::draw(&app, 80, 24);
+        let screen = screenshot::draw(&app, 74, 20);
 
-        assert!(screen.contains("Esc closes this help"), "help is clipped:\n{}", screen);
+        assert!(screen.contains("closes this help"), "help is clipped:\n{}", screen);
+        assert!(screen.contains("MOVE AROUND"), "help has lost its groups:\n{}", screen);
+        assert!(
+            screen.contains("show the ssh command"),
+            "the last group is cut off:\n{}",
+            screen
+        );
     }
 
     #[test]

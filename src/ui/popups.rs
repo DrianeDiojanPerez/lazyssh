@@ -581,44 +581,65 @@ pub fn draw_settings(frame: &mut Frame, app: &AppService, body: Rect) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
+/// A group of keys that belong together, drawn as one block of the help.
+struct Section {
+    title: &'static str,
+    keys: &'static [(&'static str, &'static str)],
+}
+
+const COLUMN: usize = 33;
+const CAP: usize = 7;
+
+/// Two columns of groups: getting around on the left, doing things on the
+/// right, in the order someone new to it would need them.
+fn sections() -> [[Section; 2]; 2] {
+    [
+        [
+            Section {
+                title: "MOVE AROUND",
+                keys: &[
+                    ("↑ ↓", "up and down the list"),
+                    ("g G", "first and last"),
+                    ("/", "filter the list"),
+                    ("Esc", "clear the filter"),
+                ],
+            },
+            Section {
+                title: "CONNECT",
+                keys: &[
+                    ("↵", "open the host"),
+                    ("n", "next tab"),
+                    ("w", "close the tab"),
+                    ("C-b", "sidebar in and out"),
+                ],
+            },
+        ],
+        [
+            Section {
+                title: "HOSTS",
+                keys: &[
+                    ("a", "add a host"),
+                    ("e", "edit this one"),
+                    ("d", "delete this one"),
+                    ("r", "reload the config"),
+                ],
+            },
+            Section {
+                title: "LOOK AND FEEL",
+                keys: &[
+                    ("s", "settings"),
+                    ("t", "themes"),
+                    ("T", "transparency"),
+                    ("c", "show the ssh command"),
+                ],
+            },
+        ],
+    ]
+}
+
 pub fn draw_help(frame: &mut Frame, app: &AppService, body: Rect) {
     let t = &app.theme;
-
-    let left = [
-        ("Navigation", ""),
-        ("↑ / k", "move up"),
-        ("↓ / j", "move down"),
-        ("g / G", "top / bottom"),
-        ("/", "filter hosts"),
-        ("Esc", "clear the filter"),
-        ("", ""),
-        ("Hosts", ""),
-        ("Enter", "open a tab"),
-        ("a", "add a host"),
-        ("e", "edit selected"),
-        ("d", "delete selected"),
-        ("r", "reload from disk"),
-    ];
-
-    let right = [
-        ("Sessions", ""),
-        ("n / w", "next / close tab"),
-        ("C-b", "sidebar on and off"),
-        ("s", "tab or full screen"),
-        ("", ""),
-        ("Form", ""),
-        ("Tab", "next field"),
-        ("Enter", "save"),
-        ("Esc", "cancel"),
-        ("", ""),
-        ("Look", ""),
-        ("t", "pick a theme"),
-        ("T", "transparency"),
-    ];
-
-
-    let rows = left.len().max(right.len());
-    let area = centered(70, rows as u16 + 8, body);
+    let area = centered(72, 21, body);
     frame.render_widget(Clear, area);
 
     let block = Block::default()
@@ -632,50 +653,71 @@ pub fn draw_help(frame: &mut Frame, app: &AppService, body: Rect) {
 
     let mut lines = vec![
         Line::from(Span::styled(
-            "Reads and writes ~/.ssh/config, backing it up on every change.",
+            "Reads and writes ~/.ssh/config, with a backup on every save.",
             t.muted(),
         )),
         Line::from(""),
     ];
 
-    for i in 0..rows {
-        let mut spans = help_cell(left.get(i), t.bold_accent(), t.base(), t.bold_accent_secondary());
-        spans.extend(help_cell(right.get(i), t.bold_accent(), t.base(), t.bold_accent_secondary()));
-        lines.push(Line::from(spans));
+    for [left, right] in sections() {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{:<COLUMN$}", left.title), t.bold_accent_secondary()),
+            Span::styled(right.title, t.bold_accent_secondary()),
+        ]));
+
+        for row in 0..left.keys.len().max(right.keys.len()) {
+            let mut spans = key_row(left.keys.get(row), t);
+            spans.extend(key_row(right.keys.get(row), t));
+            lines.push(Line::from(spans));
+        }
+
+        lines.push(Line::from(""));
     }
 
+    lines.push(Line::from(vec![
+        Span::styled(" Mouse ", t.pill(&t.accent_secondary)),
+        Span::styled("  cards, tabs, buttons and the hints below all take a click", t.muted()),
+    ]));
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled("Mouse", t.bold_accent()),
-        Span::styled("  click anything: hints, tabs, cards, fields, buttons", t.muted()),
+        Span::styled(" ? ", t.selected()),
+        Span::styled(" or ", t.muted()),
+        Span::styled(" Esc ", t.selected()),
+        Span::styled(" closes this help", t.muted()),
     ]));
-    lines.push(Line::from(vec![
-        Span::styled("c", t.bold_accent()),
-        Span::styled(" ssh command   ", t.muted()),
-        Span::styled("q", t.bold_accent()),
-        Span::styled(" quit   ", t.muted()),
-        Span::styled("Esc closes this help", t.muted()),
-    ]));
+
+    // INFO: on a short screen the blurb and then the spacing give way, so the
+    // keys themselves are the last thing to be cut
+    let room = block.inner(area).height as usize;
+    if lines.len() > room {
+        lines.drain(..2);
+    }
+    while lines.len() > room {
+        match lines.iter().position(|line| line.width() == 0) {
+            Some(blank) => drop(lines.remove(blank)),
+            None => break,
+        }
+    }
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn help_cell<'a>(
-    entry: Option<&(&'a str, &'a str)>,
-    key_style: Style,
-    desc_style: Style,
-    section_style: Style,
-) -> Vec<Span<'a>> {
-    let Some((key, desc)) = entry else {
-        return vec![Span::raw(format!("{:<32}", ""))];
+/// One key and what it does. The key wears a cap so the eye can find it
+/// without reading the whole line.
+fn key_row<'a>(entry: Option<&(&'a str, &'a str)>, t: &crate::models::Theme) -> Vec<Span<'a>> {
+    let Some((key, what)) = entry else {
+        return vec![Span::raw(" ".repeat(COLUMN))];
     };
 
-    if desc.is_empty() {
-        return vec![Span::styled(format!("{:<32}", key), section_style)];
-    }
+    let cap = format!(" {} ", key);
+    let pad = CAP.saturating_sub(cap.chars().count());
 
     vec![
-        Span::styled(format!("  {:<8}", key), key_style),
-        Span::styled(format!("{:<22}", desc), desc_style),
+        Span::styled(cap, t.selected()),
+        Span::raw(" ".repeat(pad)),
+        Span::styled(
+            format!("{:<width$}", what, width = COLUMN.saturating_sub(CAP)),
+            t.base(),
+        ),
     ]
 }
