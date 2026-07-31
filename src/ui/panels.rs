@@ -1,6 +1,6 @@
 use crossterm::event::KeyCode;
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
+    layout::{Alignment, Constraint, Margin, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{
@@ -12,68 +12,6 @@ use ratatui::{
 
 use crate::models::{Mode, Reachability, SshHost};
 use crate::services::AppService;
-
-pub fn draw_header(frame: &mut Frame, app: &AppService, area: Rect) {
-    let t = &app.theme;
-
-    let block = Block::default()
-        .borders(Borders::BOTTOM)
-        .border_style(t.border())
-        .style(t.base());
-
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let brand = Line::from(vec![
-        Span::styled(" lazyssh ", t.pill(&t.accent)),
-        Span::styled(format!(" v{}", env!("CARGO_PKG_VERSION")), t.muted()),
-    ]);
-
-    let transparency_badge = if t.transparent { " [T]" } else { "" };
-    let meta = [
-        (app.config_path_display(), t.accent_secondary()),
-        (format!("{} hosts", app.host_count()), t.muted()),
-        (format!("{}{}", t.name, transparency_badge), t.muted()),
-    ];
-
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(brand.width() as u16), Constraint::Min(0)])
-        .split(inner);
-
-    frame.render_widget(Paragraph::new(brand), columns[0]);
-    frame.render_widget(
-        Paragraph::new(join_while_it_fits(&meta, t.border(), columns[1].width).alignment(Alignment::Right)),
-        columns[1],
-    );
-}
-
-/// Joins segments with a dot until the next one would not fit, so the widest
-/// terminal shows everything and a narrow one keeps what comes first.
-fn join_while_it_fits<'a>(
-    segments: &[(String, Style)],
-    separator_style: Style,
-    width: u16,
-) -> Line<'a> {
-    let mut spans: Vec<Span> = Vec::new();
-    let mut used = 1;
-
-    for (text, style) in segments {
-        let separator = if spans.is_empty() { 0 } else { 3 };
-        if used + separator + text.chars().count() > width as usize {
-            break;
-        }
-        used += separator + text.chars().count();
-
-        if separator > 0 {
-            spans.push(Span::styled(" · ", separator_style));
-        }
-        spans.push(Span::styled(text.clone(), *style));
-    }
-
-    spans.push(Span::styled(" ", separator_style));
-    Line::from(spans)
-}
 
 pub fn draw_search_bar(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
@@ -454,16 +392,67 @@ fn detail_row<'a>(
 pub fn draw_status_bar(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
 
-    let mut spans = vec![mode_chip(app), Span::styled("  ", t.status_bar())];
+    let meta = meta_spans(app, area.width);
+    let meta_width: usize = meta.iter().map(|s| s.content.chars().count()).sum();
 
-    for (_, _, key, label, _) in hint_layout(app, area.width) {
+    let mut spans = vec![mode_chip(app), Span::styled("  ", t.status_bar())];
+    let mut used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+
+    for (_, _, key, label, _) in hint_layout(app, hint_room(app, area.width)) {
         spans.push(Span::styled(key, t.bold_accent()));
         spans.push(Span::styled(format!(" {}", label), t.muted()));
         spans.push(Span::styled(" · ", t.border()));
+        used += key.chars().count() + label.chars().count() + 4;
     }
     spans.pop();
+    used = used.saturating_sub(3);
+
+    // INFO: what the header used to say now sits at the far end of this bar,
+    // which is the only bar there is
+    let gap = (area.width as usize).saturating_sub(used + meta_width);
+    spans.push(Span::styled(" ".repeat(gap), t.status_bar()));
+    spans.extend(meta);
 
     frame.render_widget(Paragraph::new(Line::from(spans)).style(t.status_bar()), area);
+}
+
+/// Where the config is, how much is in it and what it is wearing. Segments are
+/// dropped from the end as the bar narrows, so the path outlives the version.
+fn meta_spans<'a>(app: &AppService, width: u16) -> Vec<Span<'a>> {
+    let t = &app.theme;
+    let transparency = if t.transparent { " [T]" } else { "" };
+
+    let segments = [
+        (app.config_path_display(), t.accent_secondary()),
+        (format!("{} hosts", app.host_count()), t.muted()),
+        (format!("{}{}", t.name, transparency), t.muted()),
+        (format!("v{}", env!("CARGO_PKG_VERSION")), t.border()),
+    ];
+
+    let mut spans: Vec<Span> = Vec::new();
+    let mut used = 1;
+
+    for (text, style) in segments {
+        let separator = if spans.is_empty() { 0 } else { 3 };
+        if used + separator + text.chars().count() > (width / 2) as usize {
+            break;
+        }
+        used += separator + text.chars().count();
+
+        if separator > 0 {
+            spans.push(Span::styled(" · ", t.border()));
+        }
+        spans.push(Span::styled(text, style));
+    }
+
+    spans.push(Span::styled(" ", t.status_bar()));
+    spans
+}
+
+/// The hints get whatever the meta on the right hand end does not want.
+fn hint_room(app: &AppService, width: u16) -> u16 {
+    let meta: usize = meta_spans(app, width).iter().map(|s| s.content.chars().count()).sum();
+    width.saturating_sub(meta as u16 + 1)
 }
 
 /// The hint under a point, as the key that would have done the same thing.
@@ -472,7 +461,7 @@ pub fn hint_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<Ke
         return None;
     }
 
-    hint_layout(app, area.width)
+    hint_layout(app, hint_room(app, area.width))
         .into_iter()
         .find(|(x, width, _, _, _)| column >= *x && column < x + width)
         .map(|(_, _, _, _, code)| code)

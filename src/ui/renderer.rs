@@ -16,7 +16,6 @@ use super::toasts;
 /// Where each part of the screen sits. Worked out once so that drawing and
 /// mouse hit testing can never disagree about what is where.
 pub struct Frames {
-    pub header: Rect,
     pub tabs: Rect,
     pub body: Rect,
     pub sidebar: Option<Rect>,
@@ -34,7 +33,6 @@ pub fn frames(app: &AppService, area: Rect) -> Frames {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),
             // INFO: the tab row is always there, empty or not, so opening the
             // first connection does not shove the whole screen down a line
             Constraint::Length(1),
@@ -43,7 +41,7 @@ pub fn frames(app: &AppService, area: Rect) -> Frames {
         ])
         .split(area);
 
-    let body = rows[2];
+    let body = rows[1];
     let width = if app.sidebar_open {
         SIDEBAR.min(body.width.saturating_sub(20)).max(0)
     } else {
@@ -64,14 +62,13 @@ pub fn frames(app: &AppService, area: Rect) -> Frames {
         .split(columns[0]);
 
     Frames {
-        header: rows[0],
-        tabs: rows[1],
+        tabs: rows[0],
         body,
         sidebar: (width > 0).then_some(columns[0]),
         search: sidebar[0],
         list: sidebar[1],
         main: columns[1],
-        status: rows[3],
+        status: rows[2],
     }
 }
 
@@ -82,7 +79,6 @@ pub fn render(frame: &mut Frame, app: &AppService) {
 
     let frames = frames(app, area);
 
-    panels::draw_header(frame, app, frames.header);
     tabs::draw(frame, app, frames.tabs);
     if frames.sidebar.is_some() {
         panels::draw_search_bar(frame, app, frames.search);
@@ -247,11 +243,7 @@ mod tests {
         let screen = screenshot::draw(&app, 80, 24);
         let bar = frames.status.y;
 
-        for (hint, code) in [
-            ("a add", KeyCode::Char('a')),
-            ("d delete", KeyCode::Char('d')),
-            ("? help", KeyCode::Char('?')),
-        ] {
+        for (hint, code) in [("a add", KeyCode::Char('a')), ("? help", KeyCode::Char('?'))] {
             let column = column_of(&screen, bar, hint);
             assert_eq!(
                 crate::ui::panels::hint_at(&app, frames.status, column, bar),
@@ -680,6 +672,21 @@ mod tests {
                 screen
             );
         }
+    }
+
+    #[test]
+    fn the_bottom_bar_carries_what_the_header_used_to() {
+        let (app, _repo) = app_with(hosts(3));
+
+        let screen = screenshot::draw(&app, 100, 12);
+        let top = screen.lines().next().expect("a screen has rows");
+        let bottom = screen.lines().last().expect("a screen has rows");
+
+        assert!(top.contains("tabs"), "the tab row should be the top row now:\n{}", screen);
+        assert!(bottom.contains("NORMAL"), "the bar lost its mode:\n{}", screen);
+        assert!(bottom.contains("? help"), "the bar lost its hints:\n{}", screen);
+        assert!(bottom.contains(".ssh/config"), "the bar lost the config path:\n{}", screen);
+        assert!(bottom.contains("3 hosts"), "the bar lost the host count:\n{}", screen);
     }
 
     #[test]
