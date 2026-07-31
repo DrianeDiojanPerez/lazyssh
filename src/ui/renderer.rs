@@ -139,15 +139,15 @@ mod tests {
         assert!(!screenshot::draw(&app, 80, 18).contains("Added"));
     }
 
-    /// The titled top edge of each card, as drawn: "╭─ server-07 ───╮".
+    /// The alias line of each card, as drawn: "│ server-07    :22 │".
     fn alias_rows(screen: &str) -> Vec<(u16, usize)> {
         screen
             .lines()
             .enumerate()
             .filter_map(|(row, line)| {
-                let (_, rest) = line.split_once("╭─ ").or_else(|| line.split_once("┏━ "))?;
-                let number = rest.strip_prefix("server-")?.get(..2)?.parse::<usize>().ok()?;
-                Some((row as u16, number - 1))
+                let text = line.trim_start_matches(['│', '┃', ' ']);
+                let number = text.strip_prefix("server-")?.get(..2)?.parse::<usize>().ok()?;
+                (!text.contains('@')).then_some((row as u16, number - 1))
             })
             .collect()
     }
@@ -242,9 +242,10 @@ mod tests {
         let lines: Vec<&str> = screen.lines().collect();
         let top = lines
             .iter()
-            .position(|line| line.contains("┏━ server-01 "))
-            .unwrap_or_else(|| panic!("the selected card has no titled edge:\n{}", screen));
+            .position(|line| line.contains("┃ server-01"))
+            .unwrap_or_else(|| panic!("the selected card is missing:\n{}", screen));
 
+        assert!(lines[top - 1].contains("┏━━"), "the card has no top edge:\n{}", screen);
         assert!(
             lines[top + 1].contains("dperez@server-01.example.com"),
             "the card is missing its detail line:\n{}",
@@ -252,7 +253,7 @@ mod tests {
         );
         assert!(lines[top + 2].contains("┗━━"), "the card has no bottom edge:\n{}", screen);
         assert!(
-            screen.contains("╭─ server-02 "),
+            screen.contains("│ server-02"),
             "an unselected card should keep the light box:\n{}",
             screen
         );
@@ -269,10 +270,10 @@ mod tests {
         let lines: Vec<&str> = screen.lines().collect();
         let top = lines
             .iter()
-            .position(|line| line.contains("┏━ server-01 "))
+            .position(|line| line.contains("┃ server-01"))
             .unwrap_or_else(|| panic!("the card is missing:\n{}", screen));
 
-        assert!(lines[top + 1].contains(":2222"), "the port badge is missing:\n{}", screen);
+        assert!(lines[top].contains(":2222"), "the port badge is missing:\n{}", screen);
         assert!(lines[top + 1].contains("id_ed25519"), "the key is missing:\n{}", screen);
     }
 
@@ -293,7 +294,7 @@ mod tests {
 
         let screen = screenshot::draw(&app, 80, 24);
 
-        assert!(screen.contains("┏━ server-40 "), "selection scrolled out of view:\n{}", screen);
+        assert!(screen.contains("┃ server-40"), "selection scrolled out of view:\n{}", screen);
     }
 
     #[test]

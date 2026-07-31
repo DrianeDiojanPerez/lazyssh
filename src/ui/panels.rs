@@ -136,9 +136,8 @@ pub struct Cards {
 pub fn cards(app: &AppService, area: Rect) -> Cards {
     let inner = list_block(app).inner(area);
 
-    // a card is its own little box: a titled top edge, a line of detail and
-    // the bottom edge
-    let height = 3;
+    // a card is its own little box: two edges around the two lines it holds
+    let height = 4;
     let visible = (inner.height / height).max(1) as usize;
 
     Cards {
@@ -224,25 +223,21 @@ fn key_name(host: &SshHost) -> &str {
     host.identity_file.rsplit('/').next().unwrap_or("")
 }
 
-/// One host drawn as its own card: the alias sits in the top edge the way a
-/// panel title does, and the line below carries where it goes and what it
-/// takes to get there.
+/// One host drawn as its own card. The box holds the text rather than
+/// carrying any of it, so the list reads as a stack of cards.
 fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -> Vec<Line<'a>> {
     let t = &app.theme;
 
     // INFO: the selected card is drawn in heavy box glyphs as well as in the
     // accent colour, so it still stands out where colour does not carry
-    let (edge, title_style, glyphs) = if is_selected {
-        (t.accent(), t.bold_accent(), ["┏━ ", "━", "┓", "┃ ", " ┃", "┗", "┛"])
+    let (edge, alias_style, glyphs) = if is_selected {
+        (t.accent(), t.bold_accent(), ["┏", "━", "┓", "┃ ", " ┃", "┗", "┛"])
     } else {
-        (t.border(), t.base().add_modifier(Modifier::BOLD), ["╭─ ", "─", "╮", "│ ", " │", "╰", "╯"])
+        (t.border(), t.base().add_modifier(Modifier::BOLD), ["╭", "─", "╮", "│ ", " │", "╰", "╯"])
     };
 
-    // "│ " on the left and " │" on the right leave this much for the detail
+    // "│ " on the left and " │" on the right leave this much for the text
     let room = width.saturating_sub(4);
-
-    let alias = ellipsize(&host.alias, room);
-    let dashes = width.saturating_sub(alias.chars().count() + 5);
 
     let target = if host.user.is_empty() {
         host.display_host().to_string()
@@ -250,44 +245,58 @@ fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -
         format!("{}@{}", host.user, host.display_host())
     };
 
-    let key = key_name(host).to_string();
-    let port = host.has_custom_port().then(|| format!(" :{} ", host.port));
-
-    let meta = key.chars().count()
-        + port.as_ref().map_or(0, |p| p.chars().count())
-        + usize::from(!key.is_empty() && port.is_some());
-
-    let target = ellipsize(&target, room.saturating_sub(meta + usize::from(meta > 0)));
-    let gap = room.saturating_sub(target.chars().count() + meta);
-
-    let mut detail = vec![
-        Span::styled(glyphs[3], edge),
-        Span::styled(target, t.muted()),
-        Span::raw(" ".repeat(gap)),
-    ];
-    if !key.is_empty() {
-        detail.push(Span::styled(key, t.muted()));
-        if port.is_some() {
-            detail.push(Span::raw(" "));
-        }
-    }
-    if let Some(port) = port {
-        detail.push(Span::styled(port, t.pill(&t.accent_secondary)));
-    }
-    detail.push(Span::styled(glyphs[4], edge));
+    let port = host
+        .has_custom_port()
+        .then(|| Span::styled(format!(" :{} ", host.port), t.pill(&t.accent_secondary)));
+    let key = key_name(host);
 
     vec![
-        Line::from(vec![
-            Span::styled(glyphs[0], edge),
-            Span::styled(alias, title_style),
-            Span::styled(format!(" {}{}", glyphs[1].repeat(dashes), glyphs[2]), edge),
-        ]),
-        Line::from(detail),
+        Line::from(Span::styled(
+            format!("{}{}{}", glyphs[0], glyphs[1].repeat(width.saturating_sub(2)), glyphs[2]),
+            edge,
+        )),
+        inside(glyphs, edge, room, &host.alias, alias_style, port),
+        inside(
+            glyphs,
+            edge,
+            room,
+            &target,
+            t.muted(),
+            (!key.is_empty()).then(|| Span::styled(key.to_string(), t.muted())),
+        ),
         Line::from(Span::styled(
             format!("{}{}{}", glyphs[5], glyphs[1].repeat(width.saturating_sub(2)), glyphs[6]),
             edge,
         )),
     ]
+}
+
+/// A line inside a card: something on the left, something optional pushed hard
+/// right, and the card's own sides around them. The left gives way first when
+/// the two of them will not fit.
+fn inside<'a>(
+    glyphs: [&'a str; 7],
+    edge: Style,
+    room: usize,
+    text: &str,
+    style: Style,
+    meta: Option<Span<'a>>,
+) -> Line<'a> {
+    let taken = meta.as_ref().map_or(0, |m| m.content.chars().count() + 1);
+    let text = ellipsize(text, room.saturating_sub(taken));
+    let used = text.chars().count() + taken.saturating_sub(1);
+
+    let mut spans = vec![
+        Span::styled(glyphs[3], edge),
+        Span::styled(text, style),
+        Span::raw(" ".repeat(room.saturating_sub(used))),
+    ];
+    if let Some(meta) = meta {
+        spans.push(meta);
+    }
+    spans.push(Span::styled(glyphs[4], edge));
+
+    Line::from(spans)
 }
 
 fn draw_placeholder(frame: &mut Frame, app: &AppService, block: Block, area: Rect, headline: &str, hint: &str) {
