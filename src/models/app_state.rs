@@ -34,14 +34,6 @@ impl LaunchStyle {
             Self::FullScreen => "Take the whole terminal",
         }
     }
-
-    pub fn detail(&self) -> &'static str {
-        match self {
-            Self::Ask => "choose when the connection is made",
-            Self::Tab => "several at once, beside the host list",
-            Self::FullScreen => "lazyssh steps aside until you log out",
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

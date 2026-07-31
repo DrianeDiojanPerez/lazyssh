@@ -493,12 +493,15 @@ mod tests {
         let body = super::frames(&app, Rect::new(0, 0, 84, 22)).body;
         let screen = screenshot::draw(&app, 84, 22);
 
-        assert_eq!(
-            crate::ui::popups::setting_at(body, 40, row_of(&screen, "Take the whole terminal")),
-            Some(2),
-            "the third setting is not where it is drawn:\n{}",
-            screen
-        );
+        for (label, index) in [("Take the whole terminal", 2), ("Theme", 3), ("Transparency", 4)] {
+            assert_eq!(
+                crate::ui::popups::setting_at(body, 40, row_of(&screen, label)),
+                Some(index),
+                "'{}' is not where it is drawn:\n{}",
+                label,
+                screen
+            );
+        }
     }
 
     #[test]

@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::models::{FormField, LaunchStyle};
+use crate::models::{FormField, Setting};
 use crate::services::AppService;
 
 /// Centres a popup of the given size inside the body area, shrinking it to
@@ -515,7 +515,7 @@ pub fn draw_launch_choice(frame: &mut Frame, app: &AppService, body: Rect) {
 }
 
 fn settings_area(body: Rect) -> Rect {
-    centered(56, LaunchStyle::all().len() as u16 * 2 + 7, body)
+    centered(56, 13, body)
 }
 
 /// Which setting a click landed on.
@@ -525,8 +525,7 @@ pub fn setting_at(body: Rect, column: u16, row: u16) -> Option<usize> {
         return None;
     }
 
-    let index = (row.checked_sub(inner.y + 2)? / 2) as usize;
-    (index < LaunchStyle::all().len()).then_some(index)
+    Setting::at_line(row.checked_sub(inner.y)?)
 }
 
 pub fn draw_settings(frame: &mut Frame, app: &AppService, body: Rect) {
@@ -539,35 +538,45 @@ pub fn draw_settings(frame: &mut Frame, app: &AppService, body: Rect) {
         .title(Span::styled(" Settings ", t.title()))
         .style(t.base());
 
-    let mut lines = vec![
-        Line::from(Span::styled("When you connect to a host", t.muted())),
-        Line::from(""),
-    ];
+    let width = block.inner(area).width as usize;
 
-    for (index, style) in LaunchStyle::all().iter().enumerate() {
+    // INFO: rows are placed by the same line numbers the mouse looks them up
+    // by, so a click can never land a row away from what it points at
+    let mut lines = vec![Line::from(""); 10];
+    lines[0] = Line::from(Span::styled("When you connect to a host", t.muted()));
+    lines[5] = Line::from(Span::styled("Look", t.muted()));
+
+    for (index, setting) in Setting::all().iter().enumerate() {
         let is_pointed = index == app.settings_cursor;
-        let is_active = *style == app.launch_style();
+        let value = match setting {
+            Setting::Launch(style) if *style == app.launch_style() => "in use".to_string(),
+            Setting::Launch(_) => String::new(),
+            Setting::Theme => app.theme.name.clone(),
+            Setting::Transparency => match app.theme.transparent {
+                true => "on".to_string(),
+                false => "off".to_string(),
+            },
+        };
 
-        lines.push(Line::from(vec![
+        let label = setting.label();
+        let gap = width.saturating_sub(label.chars().count() + value.chars().count() + 3);
+
+        lines[Setting::line(index) as usize] = Line::from(vec![
             Span::styled(if is_pointed { "▸ " } else { "  " }, t.bold_accent()),
-            Span::styled(
-                style.label(),
-                if is_pointed { t.bold_accent() } else { t.base() },
-            ),
-            Span::styled(if is_active { "  (in use)" } else { "" }, t.success_dot()),
-        ]));
-        lines.push(Line::from(Span::styled(format!("    {}", style.detail()), t.muted())));
+            Span::styled(label, if is_pointed { t.bold_accent() } else { t.base() }),
+            Span::raw(" ".repeat(gap)),
+            Span::styled(value, t.success_dot()),
+        ]);
     }
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
+    lines[9] = Line::from(vec![
         Span::styled("  ↑↓", t.bold_accent()),
         Span::styled(" browse  ", t.muted()),
         Span::styled("Enter", t.bold_accent()),
         Span::styled(" choose  ", t.muted()),
         Span::styled("Esc", t.bold_accent()),
         Span::styled(" close", t.muted()),
-    ]));
+    ]);
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
