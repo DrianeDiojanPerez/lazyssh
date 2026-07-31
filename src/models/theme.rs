@@ -1,6 +1,8 @@
 use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Serialize};
 
+use super::app_state::LaunchStyle;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rgb {
     pub r: u8,
@@ -135,6 +137,14 @@ impl Theme {
 pub struct ThemePreference {
     pub theme_index: usize,
     pub transparent: bool,
+    // INFO: written later than the rest, so a settings file from an older
+    // build still loads and simply gets the default
+    #[serde(default = "ask_first")]
+    pub launch_style: LaunchStyle,
+}
+
+fn ask_first() -> LaunchStyle {
+    LaunchStyle::Ask
 }
 
 impl Default for ThemePreference {
@@ -142,6 +152,7 @@ impl Default for ThemePreference {
         Self {
             theme_index: 0,
             transparent: false,
+            launch_style: LaunchStyle::Ask,
         }
     }
 }

@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mode {
     Normal,
@@ -7,6 +9,37 @@ pub enum Mode {
     ConfirmDelete(usize),
     SelectTheme,
     Help,
+}
+
+/// How a connection should be opened: in a tab beside the hosts, in the whole
+/// terminal the old way, or by asking each time.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum LaunchStyle {
+    Ask,
+    Tab,
+    FullScreen,
+}
+
+impl LaunchStyle {
+    pub fn all() -> [Self; 3] {
+        [Self::Ask, Self::Tab, Self::FullScreen]
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Ask => "Ask every time",
+            Self::Tab => "Open in a tab",
+            Self::FullScreen => "Take the whole terminal",
+        }
+    }
+
+    pub fn detail(&self) -> &'static str {
+        match self {
+            Self::Ask => "choose when the connection is made",
+            Self::Tab => "several at once, beside the host list",
+            Self::FullScreen => "lazyssh steps aside until you log out",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -79,6 +112,8 @@ impl FormField {
 pub enum Action {
     Continue,
     Quit,
+    /// Leave the interface to ssh, and come back when it is done.
+    LaunchSsh(Vec<String>),
 }
 
 /// Whether a host answered on its ssh port the last time it was tried.
