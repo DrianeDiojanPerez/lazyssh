@@ -564,8 +564,10 @@ impl AppService {
         parser.screen_mut().set_scrollback((current + lines).max(0) as usize);
     }
 
+    /// INFO: a popup takes the keyboard from the session while it is open, so
+    /// the session only counts as focused when nothing is in front of it
     pub fn is_session_focused(&self) -> bool {
-        self.focus == Focus::Session && self.active_tab.is_some()
+        self.mode == Mode::Normal && self.focus == Focus::Session && self.active_tab.is_some()
     }
 
     // ─── Form Editing ────────────────────────────────────────────────────
