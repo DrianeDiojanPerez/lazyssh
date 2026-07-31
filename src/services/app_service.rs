@@ -448,6 +448,7 @@ impl AppService {
         match Setting::all().get(self.settings_cursor) {
             Some(Setting::Launch(style)) => self.choose_launch_style(*style, theme_repo),
             Some(Setting::Transparency) => self.toggle_transparency(theme_repo),
+            Some(Setting::TabEdges) => self.toggle_tab_edges(theme_repo),
             Some(Setting::Theme) => {
                 // INFO: the picker is opened from here, so Esc out of it comes
                 // back here rather than dropping the whole panel
@@ -784,6 +785,18 @@ impl AppService {
     pub fn pick_theme(&mut self, index: usize, theme_repo: &dyn ThemeRepository) {
         self.theme_cursor = index;
         self.apply_selected_theme(theme_repo);
+    }
+
+    pub fn tab_edges(&self) -> bool {
+        self.theme_preference.tab_edges
+    }
+
+    pub fn toggle_tab_edges(&mut self, theme_repo: &dyn ThemeRepository) {
+        self.theme_preference.tab_edges = !self.theme_preference.tab_edges;
+        theme_repo.save_preference(&self.theme_preference);
+
+        let label = if self.tab_edges() { "on" } else { "off" };
+        self.toast(Toast::success(format!("Slanted tabs: {}", label)));
     }
 
     pub fn toggle_transparency(&mut self, theme_repo: &dyn ThemeRepository) {

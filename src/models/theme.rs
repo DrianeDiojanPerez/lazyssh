@@ -149,6 +149,9 @@ pub struct ThemePreference {
     // build still loads and simply gets the default
     #[serde(default = "ask_first")]
     pub launch_style: LaunchStyle,
+    /// Tabs are plain blocks unless this is turned on.
+    #[serde(default)]
+    pub tab_edges: bool,
 }
 
 fn ask_first() -> LaunchStyle {
@@ -161,6 +164,7 @@ impl Default for ThemePreference {
             theme_index: 0,
             transparent: false,
             launch_style: LaunchStyle::Ask,
+            tab_edges: false,
         }
     }
 }

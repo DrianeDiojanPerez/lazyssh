@@ -534,7 +534,7 @@ fn choice<'a>(label: &'a str, is_picked: bool, t: &crate::models::Theme) -> Span
 }
 
 fn settings_area(body: Rect) -> Rect {
-    centered(56, 13, body)
+    centered(56, 14, body)
 }
 
 /// Which setting a click landed on.
@@ -545,6 +545,13 @@ pub fn setting_at(body: Rect, column: u16, row: u16) -> Option<usize> {
     }
 
     Setting::at_line(row.checked_sub(inner.y)?)
+}
+
+fn on_or_off(is_on: bool) -> String {
+    match is_on {
+        true => "on".to_string(),
+        false => "off".to_string(),
+    }
 }
 
 pub fn draw_settings(frame: &mut Frame, app: &AppService, body: Rect) {
@@ -561,7 +568,7 @@ pub fn draw_settings(frame: &mut Frame, app: &AppService, body: Rect) {
 
     // INFO: rows are placed by the same line numbers the mouse looks them up
     // by, so a click can never land a row away from what it points at
-    let mut lines = vec![Line::from(""); 10];
+    let mut lines = vec![Line::from(""); 11];
     lines[0] = Line::from(Span::styled("When you connect to a host", t.muted()));
     lines[5] = Line::from(Span::styled("Look", t.muted()));
 
@@ -571,10 +578,8 @@ pub fn draw_settings(frame: &mut Frame, app: &AppService, body: Rect) {
             Setting::Launch(style) if *style == app.launch_style() => "in use".to_string(),
             Setting::Launch(_) => String::new(),
             Setting::Theme => app.theme.name.clone(),
-            Setting::Transparency => match app.theme.transparent {
-                true => "on".to_string(),
-                false => "off".to_string(),
-            },
+            Setting::Transparency => on_or_off(app.theme.transparent),
+            Setting::TabEdges => on_or_off(app.tab_edges()),
         };
 
         let label = setting.label();
@@ -588,7 +593,7 @@ pub fn draw_settings(frame: &mut Frame, app: &AppService, body: Rect) {
         ]);
     }
 
-    lines[9] = Line::from(vec![
+    lines[10] = Line::from(vec![
         Span::styled("  ↑↓", t.bold_accent()),
         Span::styled(" browse  ", t.muted()),
         Span::styled("Enter", t.bold_accent()),
