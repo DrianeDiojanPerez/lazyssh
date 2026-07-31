@@ -229,12 +229,13 @@ fn key_name(host: &SshHost) -> &str {
 fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -> Vec<Line<'a>> {
     let t = &app.theme;
 
-    // INFO: the selected card is drawn in heavy box glyphs as well as in the
-    // accent colour, so it still stands out where colour does not carry
-    let (edge, alias_style, glyphs) = if is_selected {
-        (t.accent(), t.bold_accent(), ["┏", "━", "┓", "┃ ", " ┃", "┗", "┛"])
+    // INFO: every card keeps the same rounded frame, so selection shows in the
+    // colour it is drawn in rather than in a different shape
+    let glyphs = ["╭", "─", "╮", "│ ", " │", "╰", "╯"];
+    let (edge, alias_style) = if is_selected {
+        (t.accent(), t.bold_accent())
     } else {
-        (t.border(), t.base().add_modifier(Modifier::BOLD), ["╭", "─", "╮", "│ ", " │", "╰", "╯"])
+        (t.border(), t.base().add_modifier(Modifier::BOLD))
     };
 
     // "│ " on the left and " │" on the right leave this much for the text
