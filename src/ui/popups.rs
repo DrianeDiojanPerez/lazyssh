@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::models::FormField;
+use crate::models::{FormField, LaunchStyle};
 use crate::services::AppService;
 
 /// Centres a popup of the given size inside the body area, shrinking it to
@@ -429,6 +429,149 @@ pub fn draw_theme_selector(frame: &mut Frame, app: &AppService, body: Rect) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
+const TAB: &str = " In a tab ";
+const FULL: &str = " Whole terminal ";
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LaunchButton {
+    Tab,
+    FullScreen,
+}
+
+fn launch_buttons(body: Rect) -> (Rect, Rect, Rect) {
+    let area = centered(58, 10, body);
+    let inner = choice_block().inner(area);
+
+    let width = TAB.len() as u16 + FULL.len() as u16 + 2;
+    let x = inner.x + inner.width.saturating_sub(width) / 2;
+    let y = inner.y + 4;
+
+    (
+        area,
+        Rect { x, y, width: TAB.len() as u16, height: 1 },
+        Rect { x: x + TAB.len() as u16 + 2, y, width: FULL.len() as u16, height: 1 },
+    )
+}
+
+pub fn launch_button_at(body: Rect, column: u16, row: u16) -> Option<LaunchButton> {
+    let (_, tab, full) = launch_buttons(body);
+
+    if hits(tab, column, row) {
+        return Some(LaunchButton::Tab);
+    }
+    if hits(full, column, row) {
+        return Some(LaunchButton::FullScreen);
+    }
+    None
+}
+
+fn choice_block() -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title_alignment(Alignment::Center)
+        .padding(Padding::new(2, 2, 1, 0))
+}
+
+/// Asked when a connection is made and the settings have not already made up
+/// their mind for it.
+pub fn draw_launch_choice(frame: &mut Frame, app: &AppService, body: Rect) {
+    let t = &app.theme;
+    let (area, tab, _) = launch_buttons(body);
+    frame.render_widget(Clear, area);
+
+    let alias = app.selected_host().map(|h| h.alias.as_str()).unwrap_or("?");
+
+    let block = choice_block()
+        .border_style(t.accent())
+        .title(Span::styled(" Connect ", t.title()))
+        .style(t.base());
+
+    let inner = block.inner(area);
+    let lead = tab.x.saturating_sub(inner.x) as usize;
+
+    let text = Text::from(vec![
+        Line::from(Span::styled(
+            format!("How should '{}' open?", alias),
+            t.base().add_modifier(Modifier::BOLD),
+        ))
+        .alignment(Alignment::Center),
+        Line::from(""),
+        Line::from(Span::styled("A tab keeps lazyssh beside it", t.muted()))
+            .alignment(Alignment::Center),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw(" ".repeat(lead)),
+            Span::styled(TAB, t.pill(&t.accent)),
+            Span::raw("  "),
+            Span::styled(FULL, t.selected()),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("t tab   f full screen   s settings   Esc cancel", t.muted()))
+            .alignment(Alignment::Center),
+    ]);
+
+    frame.render_widget(Paragraph::new(text).block(block), area);
+}
+
+fn settings_area(body: Rect) -> Rect {
+    centered(56, LaunchStyle::all().len() as u16 * 2 + 7, body)
+}
+
+/// Which setting a click landed on.
+pub fn setting_at(body: Rect, column: u16, row: u16) -> Option<usize> {
+    let inner = choice_block().inner(settings_area(body));
+    if column < inner.x || column >= inner.right() {
+        return None;
+    }
+
+    let index = (row.checked_sub(inner.y + 2)? / 2) as usize;
+    (index < LaunchStyle::all().len()).then_some(index)
+}
+
+pub fn draw_settings(frame: &mut Frame, app: &AppService, body: Rect) {
+    let t = &app.theme;
+    let area = settings_area(body);
+    frame.render_widget(Clear, area);
+
+    let block = choice_block()
+        .border_style(t.accent_secondary())
+        .title(Span::styled(" Settings ", t.title()))
+        .style(t.base());
+
+    let mut lines = vec![
+        Line::from(Span::styled("When you connect to a host", t.muted())),
+        Line::from(""),
+    ];
+
+    for (index, style) in LaunchStyle::all().iter().enumerate() {
+        let is_pointed = index == app.settings_cursor;
+        let is_active = *style == app.launch_style();
+
+        lines.push(Line::from(vec![
+            Span::styled(if is_pointed { "▸ " } else { "  " }, t.bold_accent()),
+            Span::styled(
+                style.label(),
+                if is_pointed { t.bold_accent() } else { t.base() },
+            ),
+            Span::styled(if is_active { "  (in use)" } else { "" }, t.success_dot()),
+        ]));
+        lines.push(Line::from(Span::styled(format!("    {}", style.detail()), t.muted())));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("  ↑↓", t.bold_accent()),
+        Span::styled(" browse  ", t.muted()),
+        Span::styled("Enter", t.bold_accent()),
+        Span::styled(" choose  ", t.muted()),
+        Span::styled("Esc", t.bold_accent()),
+        Span::styled(" close", t.muted()),
+    ]));
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
 pub fn draw_help(frame: &mut Frame, app: &AppService, body: Rect) {
     let t = &app.theme;
 
@@ -452,10 +595,10 @@ pub fn draw_help(frame: &mut Frame, app: &AppService, body: Rect) {
         ("Sessions", ""),
         ("n / w", "next / close tab"),
         ("C-b", "sidebar on and off"),
+        ("s", "tab or full screen"),
         ("", ""),
         ("Form", ""),
         ("Tab", "next field"),
-        ("S-Tab", "previous field"),
         ("Enter", "save"),
         ("Esc", "cancel"),
         ("", ""),
@@ -463,6 +606,7 @@ pub fn draw_help(frame: &mut Frame, app: &AppService, body: Rect) {
         ("t", "pick a theme"),
         ("T", "transparency"),
     ];
+
 
     let rows = left.len().max(right.len());
     let area = centered(70, rows as u16 + 8, body);
