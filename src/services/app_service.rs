@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::models::{
-    Action, Focus, FormField, LaunchStyle, Mode, SshHost, Theme, ThemePreference, Toast,
+    Action, Focus, FormField, LaunchStyle, Mode, Setting, SshHost, Theme, ThemePreference, Toast,
 };
 use crate::repositories::{SshRepository, ThemeRepository};
 use crate::services::{Probes, Session};
@@ -50,6 +50,7 @@ pub struct AppService {
     pub focus: Focus,
     pub sidebar_open: bool,
     pub settings_cursor: usize,
+    theme_from_settings: bool,
 }
 
 impl AppService {
@@ -65,7 +66,9 @@ impl AppService {
 
         let theme_index = preference.theme_index.min(available_themes.len().saturating_sub(1));
         let mut theme = available_themes[theme_index].clone();
-        theme.transparent = preference.transparent;
+        // the first theme in the catalog is the one that lets the terminal
+        // show through, whatever the preference says
+        theme.transparent = theme_index == 0 || preference.transparent;
 
         let host_count = hosts.len();
         let probes = Probes::default();
@@ -102,6 +105,7 @@ impl AppService {
             focus: Focus::Sidebar,
             sidebar_open: true,
             settings_cursor: 0,
+            theme_from_settings: false,
         }
     }
 
@@ -369,7 +373,19 @@ impl AppService {
         if self.mode == Mode::SelectTheme {
             self.restore_theme();
         }
-        self.mode = Mode::Normal;
+        self.mode = self.mode_behind();
+    }
+
+    /// Where Esc lands: back in the settings panel when that is what opened
+    /// the popup, and on the host list otherwise.
+    fn mode_behind(&mut self) -> Mode {
+        match self.mode == Mode::SelectTheme && self.theme_from_settings {
+            true => {
+                self.theme_from_settings = false;
+                Mode::Settings
+            }
+            false => Mode::Normal,
+        }
     }
 
     // ─── SSH Execution ───────────────────────────────────────────────────
@@ -397,9 +413,9 @@ impl AppService {
     }
 
     pub fn open_settings(&mut self) {
-        self.settings_cursor = LaunchStyle::all()
+        self.settings_cursor = Setting::all()
             .iter()
-            .position(|style| *style == self.theme_preference.launch_style)
+            .position(|row| *row == Setting::Launch(self.theme_preference.launch_style))
             .unwrap_or(0);
         self.mode = Mode::Settings;
     }
@@ -409,12 +425,23 @@ impl AppService {
     }
 
     pub fn settings_cursor_down(&mut self) {
-        self.settings_cursor = (self.settings_cursor + 1).min(LaunchStyle::all().len() - 1);
+        self.settings_cursor = (self.settings_cursor + 1).min(Setting::all().len() - 1);
     }
 
+    /// Acts on the settings row under the cursor. The panel stays open so a
+    /// few things can be changed in one visit.
     pub fn apply_settings_choice(&mut self, theme_repo: &dyn ThemeRepository) {
-        self.choose_launch_style(LaunchStyle::all()[self.settings_cursor], theme_repo);
-        self.mode = Mode::Normal;
+        match Setting::all().get(self.settings_cursor) {
+            Some(Setting::Launch(style)) => self.choose_launch_style(*style, theme_repo),
+            Some(Setting::Transparency) => self.toggle_transparency(theme_repo),
+            Some(Setting::Theme) => {
+                // INFO: the picker is opened from here, so Esc out of it comes
+                // back here rather than dropping the whole panel
+                self.theme_from_settings = true;
+                self.open_theme_selector();
+            }
+            None => {}
+        }
     }
 
     pub fn choose_launch_style(&mut self, style: LaunchStyle, theme_repo: &dyn ThemeRepository) {
@@ -735,7 +762,7 @@ impl AppService {
 
             self.toast(Toast::success(format!("Theme: {}", name)));
         }
-        self.mode = Mode::Normal;
+        self.mode = self.mode_behind();
     }
 
     pub fn pick_theme(&mut self, index: usize, theme_repo: &dyn ThemeRepository) {
@@ -952,7 +979,25 @@ mod tests {
         app.apply_settings_choice(&crate::test_support::StubThemeRepo);
 
         assert_eq!(app.launch_style(), LaunchStyle::Tab);
-        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.mode, Mode::Settings, "the panel stays open for the next change");
+    }
+
+    #[test]
+    fn the_settings_panel_reaches_the_theme_and_the_transparency() {
+        let (mut app, _repo) = app_with(vec![host("box", 22)]);
+        let was_transparent = app.theme.transparent;
+        app.open_settings();
+
+        app.settings_cursor = 4;
+        app.apply_settings_choice(&crate::test_support::StubThemeRepo);
+        assert_eq!(app.theme.transparent, !was_transparent, "transparency should have flipped");
+
+        app.settings_cursor = 3;
+        app.apply_settings_choice(&crate::test_support::StubThemeRepo);
+        assert_eq!(app.mode, Mode::SelectTheme, "the theme row opens the picker");
+
+        app.cancel_mode();
+        assert_eq!(app.mode, Mode::Settings, "and Esc comes back to the settings");
     }
 
     #[test]
