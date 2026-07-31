@@ -17,7 +17,7 @@ use super::toasts;
 /// mouse hit testing can never disagree about what is where.
 pub struct Frames {
     pub header: Rect,
-    pub tabs: Option<Rect>,
+    pub tabs: Rect,
     pub body: Rect,
     pub sidebar: Option<Rect>,
     pub search: Rect,
@@ -35,7 +35,9 @@ pub fn frames(app: &AppService, area: Rect) -> Frames {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(2),
-            Constraint::Length(if app.sessions.is_empty() { 0 } else { 1 }),
+            // INFO: the tab row is always there, empty or not, so opening the
+            // first connection does not shove the whole screen down a line
+            Constraint::Length(1),
             Constraint::Min(5),
             Constraint::Length(1),
         ])
@@ -63,7 +65,7 @@ pub fn frames(app: &AppService, area: Rect) -> Frames {
 
     Frames {
         header: rows[0],
-        tabs: (!app.sessions.is_empty()).then_some(rows[1]),
+        tabs: rows[1],
         body,
         sidebar: (width > 0).then_some(columns[0]),
         search: sidebar[0],
@@ -81,9 +83,7 @@ pub fn render(frame: &mut Frame, app: &AppService) {
     let frames = frames(app, area);
 
     panels::draw_header(frame, app, frames.header);
-    if let Some(tabs) = frames.tabs {
-        tabs::draw(frame, app, tabs);
-    }
+    tabs::draw(frame, app, frames.tabs);
     if frames.sidebar.is_some() {
         panels::draw_search_bar(frame, app, frames.search);
         panels::draw_host_list(frame, app, frames.list);
@@ -422,6 +422,39 @@ mod tests {
     }
 
     #[test]
+    fn opening_the_first_tab_moves_nothing_else() {
+        let (mut app, _repo) = app_with(hosts(3));
+        let area = Rect::new(0, 0, 100, 20);
+
+        let before = super::frames(&app, area);
+        app.sessions.push(
+            crate::services::Session::spawn("server-01", "true", &[], 20, 40)
+                .expect("the pty should have started"),
+        );
+        let after = super::frames(&app, area);
+
+        assert_eq!(before.list, after.list, "the host list should not have moved");
+        assert_eq!(before.main, after.main, "the main pane should not have moved");
+        assert!(
+            screenshot::draw(&app, 100, 20).contains("no open connections") == false,
+            "the row should be showing the tab now"
+        );
+    }
+
+    #[test]
+    fn the_tab_row_says_what_it_is_for_while_it_is_empty() {
+        let (app, _repo) = app_with(hosts(3));
+
+        let screen = screenshot::draw(&app, 100, 20);
+
+        assert!(
+            screen.contains("no open connections"),
+            "the empty tab row says nothing:\n{}",
+            screen
+        );
+    }
+
+    #[test]
     fn an_open_session_takes_a_tab_and_the_main_pane() {
         let (mut app, _repo) = app_with(hosts(3));
         app.sessions.push(
@@ -440,7 +473,7 @@ mod tests {
 
         let screen = screenshot::draw(&app, 100, 20);
         let frames = super::frames(&app, Rect::new(0, 0, 100, 20));
-        let tabs = frames.tabs.expect("an open session should raise the tab bar");
+        let tabs = frames.tabs;
 
         assert_eq!(
             crate::ui::tabs::tab_at(&app, tabs, column_of(&screen, tabs.y, "server-01"), tabs.y),

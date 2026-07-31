@@ -60,6 +60,19 @@ pub fn tab_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<Tab
 
 pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
+
+    if app.sessions.is_empty() {
+        // the row stays put and says what would fill it
+        let empty = Line::from(vec![
+            Span::styled("  no open connections", t.muted()),
+            Span::styled("   ↵ ", t.border()),
+            Span::styled("opens the selected host", t.muted()),
+        ]);
+
+        frame.render_widget(Paragraph::new(empty).style(t.base()), area);
+        return;
+    }
+
     let mut spans = vec![Span::styled(" ", t.base())];
 
     for (_, label, index) in layout(app) {

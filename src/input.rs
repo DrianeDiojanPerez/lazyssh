@@ -203,12 +203,10 @@ fn on_mouse(
         return Ok(());
     }
 
-    if let Some(area) = frames.tabs {
-        match tabs::tab_at(app, area, column, row) {
-            Some(tabs::TabHit::Select(index)) => return ok(app.select_tab(index)),
-            Some(tabs::TabHit::Close(index)) => return ok(app.close_tab(index)),
-            None => {}
-        }
+    match tabs::tab_at(app, frames.tabs, column, row) {
+        Some(tabs::TabHit::Select(index)) => return ok(app.select_tab(index)),
+        Some(tabs::TabHit::Close(index)) => return ok(app.close_tab(index)),
+        None => {}
     }
 
     // clicking a pane is how the keyboard moves between them
