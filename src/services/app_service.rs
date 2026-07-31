@@ -50,6 +50,7 @@ pub struct AppService {
     pub focus: Focus,
     pub sidebar_open: bool,
     pub settings_cursor: usize,
+    pub launch_cursor: usize,
     theme_from_settings: bool,
 }
 
@@ -105,6 +106,7 @@ impl AppService {
             focus: Focus::Sidebar,
             sidebar_open: true,
             settings_cursor: 0,
+            launch_cursor: 0,
             theme_from_settings: false,
         }
     }
@@ -398,10 +400,22 @@ impl AppService {
         }
 
         match self.theme_preference.launch_style {
-            LaunchStyle::Ask => self.mode = Mode::ChooseLaunch,
+            LaunchStyle::Ask => {
+                // the quicker answer is the one under the cursor to begin with
+                self.launch_cursor = 0;
+                self.mode = Mode::ChooseLaunch;
+            }
             LaunchStyle::Tab => self.open_session(rows, columns),
             LaunchStyle::FullScreen => self.launch_full_screen(),
         }
+    }
+
+    pub fn launch_cursor_left(&mut self) {
+        self.launch_cursor = 0;
+    }
+
+    pub fn launch_cursor_right(&mut self) {
+        self.launch_cursor = 1;
     }
 
     /// Hands the whole terminal to ssh, the way lazyssh used to.
