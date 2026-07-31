@@ -455,6 +455,44 @@ mod tests {
     }
 
     #[test]
+    fn a_session_wears_the_theme_and_flags_the_notices() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.sessions.push(
+            crate::services::Session::spawn(
+                "server-01",
+                "printf",
+                &["** WARNING: not post-quantum\nhello\n".to_string()],
+                20,
+                60,
+            )
+            .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+
+        settle(|| screenshot::draw(&app, 100, 20).contains("hello"));
+
+        let screen = screenshot::draw(&app, 100, 20);
+        let buffer = screenshot::buffer(&app, 100, 20);
+        let colour = |needle: &str| {
+            let row = row_of(&screen, needle);
+            buffer.get(column_of(&screen, row, needle), row).style().fg
+        };
+
+        assert_eq!(
+            colour("WARNING"),
+            Some(app.theme.warning.to_color()),
+            "the notice should be called out:\n{}",
+            screen
+        );
+        assert_eq!(
+            colour("hello"),
+            Some(app.theme.fg.to_color()),
+            "plain output should wear the theme:\n{}",
+            screen
+        );
+    }
+
+    #[test]
     fn an_open_session_takes_a_tab_and_the_main_pane() {
         let (mut app, _repo) = app_with(hosts(3));
         app.sessions.push(

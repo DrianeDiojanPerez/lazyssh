@@ -37,6 +37,10 @@ pub fn draw(frame: &mut Frame, app: &AppService, session: &Session, area: Rect) 
 
     let buffer = frame.buffer_mut();
     for row in 0..inner.height {
+        // INFO: ssh puts its own notices out as lines opening with a star, and
+        // says them in plain text; they are worth the warning colour
+        let notice = is_notice(screen, row, inner.width);
+
         for column in 0..inner.width {
             let Some(cell) = screen.cell(row, column) else {
                 continue;
@@ -45,8 +49,13 @@ pub fn draw(frame: &mut Frame, app: &AppService, session: &Session, area: Rect) 
             let target = buffer.get_mut(inner.x + column, inner.y + row);
             let contents = cell.contents();
 
+            let mut style = style_of(cell, t);
+            if notice && cell.fgcolor() == vt100::Color::Default {
+                style = style.fg(t.warning.to_color());
+            }
+
             target.set_symbol(if contents.is_empty() { " " } else { &contents });
-            target.set_style(style_of(cell));
+            target.set_style(style);
         }
     }
 
@@ -58,8 +67,34 @@ pub fn draw(frame: &mut Frame, app: &AppService, session: &Session, area: Rect) 
     }
 }
 
-fn style_of(cell: &vt100::Cell) -> Style {
-    let mut style = Style::default().fg(color_of(cell.fgcolor())).bg(color_of(cell.bgcolor()));
+/// A line the remote wrote in plain text, opening with a star: ssh's banner
+/// and its warnings look like this and nothing else on a prompt does.
+fn is_notice(screen: &vt100::Screen, row: u16, width: u16) -> bool {
+    let mut seen = String::new();
+
+    for column in 0..width.min(4) {
+        match screen.cell(row, column) {
+            Some(cell) => seen.push_str(&cell.contents()),
+            None => break,
+        }
+    }
+
+    seen.trim_start().starts_with('*')
+}
+
+/// The remote's own colours are kept as they are; what it leaves at the
+/// default is drawn in the theme, so a session looks part of the app.
+fn style_of(cell: &vt100::Cell, t: &crate::models::Theme) -> Style {
+    let fg = match cell.fgcolor() {
+        vt100::Color::Default => t.base().fg.unwrap_or(Color::Reset),
+        colour => color_of(colour),
+    };
+    let bg = match cell.bgcolor() {
+        vt100::Color::Default => t.base().bg.unwrap_or(Color::Reset),
+        colour => color_of(colour),
+    };
+
+    let mut style = Style::default().fg(fg).bg(bg);
 
     if cell.bold() {
         style = style.add_modifier(Modifier::BOLD);
