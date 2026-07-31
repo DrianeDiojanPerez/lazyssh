@@ -63,11 +63,7 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
 
     if app.sessions.is_empty() {
         // the row stays put and says what would fill it
-        let empty = Line::from(vec![
-            Span::styled("  no open connections", t.muted()),
-            Span::styled("   ↵ ", t.border()),
-            Span::styled("opens the selected host", t.muted()),
-        ]);
+        let empty = Line::from(Span::styled("  no open connections", t.muted()));
 
         frame.render_widget(Paragraph::new(empty).style(t.base()), area);
         return;
