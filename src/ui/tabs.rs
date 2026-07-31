@@ -17,11 +17,10 @@ fn badge_width() -> u16 {
     BADGE.chars().count() as u16 + 2
 }
 
-/// The half triangles that slant a tab off at each end. Both are filled along
-/// their top edge, so the top of the tab runs flush across all three cells and
-/// only the bottom corners are cut away.
+/// The half triangles that slant a tab off at each end: the left one leans the
+/// other way up from the right one.
 const TAB_LEFT: &str = "\u{e0be}";
-const TAB_RIGHT: &str = "\u{e0bc}";
+const TAB_RIGHT: &str = "\u{e0b8}";
 
 /// What a click on the tab bar meant.
 #[derive(Debug, Clone, Copy, PartialEq)]
