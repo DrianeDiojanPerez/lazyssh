@@ -37,7 +37,7 @@ pub fn frames(app: &AppService, area: Rect) -> Frames {
             Constraint::Length(2),
             // INFO: the tab row is always there, empty or not, so opening the
             // first connection does not shove the whole screen down a line
-            Constraint::Length(2),
+            Constraint::Length(1),
             Constraint::Min(5),
             Constraint::Length(1),
         ])
@@ -475,8 +475,7 @@ mod tests {
         let frames = super::frames(&app, Rect::new(0, 0, 100, 20));
         let tabs = frames.tabs;
 
-        // the label sits on the second line of the tab card
-        let label = tabs.y + 1;
+        let label = tabs.y;
         assert_eq!(
             crate::ui::tabs::tab_at(&app, tabs, column_of(&screen, label, "server-01"), label),
             Some(crate::ui::tabs::TabHit::Select(0)),
@@ -487,12 +486,6 @@ mod tests {
             crate::ui::tabs::tab_at(&app, tabs, column_of(&screen, label, "×"), label),
             Some(crate::ui::tabs::TabHit::Close(0)),
             "clicking the cross should close it:\n{}",
-            screen
-        );
-        assert_eq!(
-            crate::ui::tabs::tab_at(&app, tabs, column_of(&screen, label, "server-01"), tabs.y),
-            Some(crate::ui::tabs::TabHit::Select(0)),
-            "the whole card should take the click, not just its label:\n{}",
             screen
         );
     }

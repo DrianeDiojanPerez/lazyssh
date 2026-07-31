@@ -68,42 +68,31 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
 
     if app.sessions.is_empty() {
         // the row stays put and says what would fill it
-        let empty = vec![
-            Line::from(""),
-            Line::from(Span::styled("  no open connections", t.muted())),
-        ];
+        let empty = Line::from(Span::styled("  no open connections", t.muted()));
 
 
         frame.render_widget(Paragraph::new(empty).style(t.base()), area);
         return;
     }
 
-    // INFO: a tab has no bottom edge, so it runs into the pane below it the
-    // way a tab should
-    let mut top = vec![Span::raw(" ")];
-    let mut middle = vec![Span::raw(" ")];
+    let mut spans = vec![Span::raw(" ")];
 
     for (_, label, index) in layout(app) {
         let is_active = app.active_tab == Some(index);
 
+        // INFO: both tabs are the same shape and only the fill tells them
+        // apart, so the bar does not jump about as tabs come and go
         let (edge, fill) = match (is_active, app.focus) {
             (true, Focus::Session) => (t.accent(), t.pill(&t.accent)),
             (true, Focus::Sidebar) => (t.accent(), t.selected()),
             _ => (t.border(), t.muted()),
         };
 
-        let dashes = "─".repeat(label.chars().count());
-
-        top.push(Span::styled(format!("╭{}╮", dashes), edge));
-        middle.push(Span::styled("│", edge));
-        middle.push(Span::styled(label, fill));
-        middle.push(Span::styled("│", edge));
-
-        for row in [&mut top, &mut middle] {
-            row.push(Span::raw(" "));
-        }
+        spans.push(Span::styled("│", edge));
+        spans.push(Span::styled(label, fill));
+        spans.push(Span::styled("│", edge));
+        spans.push(Span::raw(" "));
     }
 
-    let lines = vec![Line::from(top), Line::from(middle)];
-    frame.render_widget(Paragraph::new(lines).style(t.base()), area);
+    frame.render_widget(Paragraph::new(Line::from(spans)).style(t.base()), area);
 }

@@ -39,24 +39,20 @@ const CANCEL: &str = " Cancel ";
 pub fn form_layout(app: &AppService, body: Rect) -> FormLayout {
     let fields = FormField::all();
 
-    // a label and an input for each field, then a blank line and the buttons
-    let content_height = (fields.len() * 2) as u16
-        + 1
-        + BUTTON_HEIGHT
-        + u16::from(app.form_error.is_some());
+    // two rows per field, a blank row between them, plus the footer block
+    let content_height = (fields.len() * 3) as u16 + if app.form_error.is_some() { 2 } else { 1 };
     let area = centered(58, content_height + 3, body);
     let inner = form_block("").inner(area);
 
     // INFO: on a terminal too short for the whole form, scroll just enough to
     // keep the field being edited on screen
-    let active_row = fields.iter().position(|f| *f == app.form_field).unwrap_or(0) * 2 + 2;
+    let active_row = fields.iter().position(|f| *f == app.form_field).unwrap_or(0) * 3 + 2;
     let scroll = active_row.saturating_sub(inner.height as usize) as u16;
 
-    let footer = inner.y + (fields.len() * 2) as u16
-        + 1
+    let footer = inner.y + (fields.len() * 3) as u16
         + u16::from(app.form_error.is_some())
         - scroll;
-    let buttons = button_width(SAVE) + button_width(CANCEL) + 2;
+    let buttons = SAVE.len() as u16 + CANCEL.len() as u16 + 2;
 
     FormLayout {
         area,
@@ -65,14 +61,14 @@ pub fn form_layout(app: &AppService, body: Rect) -> FormLayout {
         save: Rect {
             x: inner.right().saturating_sub(buttons),
             y: footer,
-            width: button_width(SAVE),
-            height: BUTTON_HEIGHT,
+            width: SAVE.len() as u16,
+            height: 1,
         },
         cancel: Rect {
-            x: inner.right().saturating_sub(button_width(CANCEL)),
+            x: inner.right().saturating_sub(CANCEL.len() as u16),
             y: footer,
-            width: button_width(CANCEL),
-            height: BUTTON_HEIGHT,
+            width: CANCEL.len() as u16,
+            height: 1,
         },
     }
 }
@@ -86,7 +82,7 @@ pub fn field_at(app: &AppService, body: Rect, column: u16, row: u16) -> Option<F
     }
 
     let offset = row.checked_sub(layout.inner.y)? + layout.scroll;
-    FormField::all().get(offset as usize / 2).cloned()
+    FormField::all().get(offset as usize / 3).cloned()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -108,48 +104,7 @@ pub fn form_button_at(app: &AppService, body: Rect, column: u16, row: u16) -> Op
 }
 
 fn hits(rect: Rect, column: u16, row: u16) -> bool {
-    column >= rect.x && column < rect.right() && row >= rect.y && row < rect.bottom()
-}
-
-/// Buttons are small cards: the one that acts is filled in, the one that backs
-/// out is only outlined, so the pair reads at a glance which is which.
-const BUTTON_HEIGHT: u16 = 3;
-
-fn button_width(label: &str) -> u16 {
-    label.chars().count() as u16 + 2
-}
-
-/// The three lines a row of buttons takes, starting `lead` columns in.
-fn button_row<'a>(
-    buttons: &[(&'a str, bool)],
-    lead: usize,
-    t: &crate::models::Theme,
-) -> [Vec<Span<'a>>; 3] {
-    let mut top = vec![Span::raw(" ".repeat(lead))];
-    let mut middle = vec![Span::raw(" ".repeat(lead))];
-    let mut bottom = vec![Span::raw(" ".repeat(lead))];
-
-    for (index, (label, filled)) in buttons.iter().enumerate() {
-        if index > 0 {
-            for row in [&mut top, &mut middle, &mut bottom] {
-                row.push(Span::raw("  "));
-            }
-        }
-
-        let edge = if *filled { t.accent() } else { t.border() };
-        let dashes = "─".repeat(label.chars().count());
-
-        top.push(Span::styled(format!("╭{}╮", dashes), edge));
-        middle.push(Span::styled("│", edge));
-        middle.push(Span::styled(
-            label.to_string(),
-            if *filled { t.pill(&t.accent) } else { t.base() },
-        ));
-        middle.push(Span::styled("│", edge));
-        bottom.push(Span::styled(format!("╰{}╯", dashes), edge));
-    }
-
-    [top, middle, bottom]
+    row == rect.y && column >= rect.x && column < rect.right()
 }
 
 fn form_block(title: &str) -> Block<'_> {
@@ -198,28 +153,27 @@ pub fn draw_form(frame: &mut Frame, app: &AppService, title: &str, body: Rect) {
             format!("{:<width$}", format!("  {}{}", value, cursor), width = width),
             input_style,
         )));
+        lines.push(Line::from(""));
     }
 
     if let Some(message) = app.form_error.as_ref() {
         lines.push(Line::from(Span::styled(format!("  {}", message), t.bold_error())));
     }
-    lines.push(Line::from(""));
 
     let hint = if app.is_completing() {
         "  ↑↓ pick a key   Enter use it"
     } else {
         "  * required   Tab next field"
     };
-    let lead = (layout.save.x - layout.inner.x) as usize;
-    let [top, mut middle, bottom] = button_row(&[(SAVE, true), (CANCEL, false)], lead, t);
+    let gap = width.saturating_sub(hint.chars().count() + SAVE.len() + CANCEL.len() + 2);
 
-    // the hint shares the middle line, to the left of the buttons
-    middle[0] = Span::styled(format!("{:<width$}", hint, width = lead), t.muted());
-
-    lines.push(Line::from(top));
-    lines.push(Line::from(middle));
-    lines.push(Line::from(bottom));
-    let _ = width;
+    lines.push(Line::from(vec![
+        Span::styled(hint, t.muted()),
+        Span::raw(" ".repeat(gap)),
+        Span::styled(SAVE, t.pill(&t.accent)),
+        Span::raw("  "),
+        Span::styled(CANCEL, t.selected()),
+    ]));
 
     frame.render_widget(
         Paragraph::new(lines).block(block).scroll((layout.scroll, 0)),
@@ -249,7 +203,7 @@ pub fn completion_rect(app: &AppService, body: Rect) -> Option<Rect> {
     let height = (matches.len() as u16 + 2).min(7);
 
     let row = FormField::all().iter().position(|f| *f == app.form_field).unwrap_or(0);
-    let field = layout.inner.y + (row * 2 + 1) as u16 - layout.scroll;
+    let field = layout.inner.y + (row * 3 + 1) as u16 - layout.scroll;
 
     // INFO: the menu never covers the field it belongs to, so it drops below
     // when there is room, sits above the label when there is not, and stays
@@ -332,22 +286,17 @@ pub enum DeleteButton {
 }
 
 fn delete_buttons(body: Rect) -> (Rect, Rect, Rect) {
-    let area = centered(52, 10, body);
+    let area = centered(52, 8, body);
     let inner = delete_block().inner(area);
 
-    let width = button_width(DELETE) + button_width(KEEP) + 2;
+    let width = DELETE.len() as u16 + KEEP.len() as u16 + 2;
     let x = inner.x + (inner.width.saturating_sub(width)) / 2;
     let y = inner.y + 4;
 
     (
         area,
-        Rect { x, y, width: button_width(DELETE), height: BUTTON_HEIGHT },
-        Rect {
-            x: x + button_width(DELETE) + 2,
-            y,
-            width: button_width(KEEP),
-            height: BUTTON_HEIGHT,
-        },
+        Rect { x, y, width: DELETE.len() as u16, height: 1 },
+        Rect { x: x + DELETE.len() as u16 + 2, y, width: KEEP.len() as u16, height: 1 },
     )
 }
 
@@ -396,15 +345,13 @@ pub fn draw_delete_confirmation(frame: &mut Frame, app: &AppService, index: usiz
         Line::from(Span::styled("A timestamped backup is written first.", t.muted()))
             .alignment(Alignment::Center),
         Line::from(""),
+        Line::from(vec![
+            Span::raw(" ".repeat(lead)),
+            Span::styled(DELETE, t.pill(&t.error)),
+            Span::raw("  "),
+            Span::styled(KEEP, t.selected()),
+        ]),
     ]);
-
-    let [top, middle, bottom] = button_row(&[(DELETE, true), (KEEP, false)], lead, t);
-    let text = Text::from(
-        text.lines
-            .into_iter()
-            .chain([Line::from(top), Line::from(middle), Line::from(bottom)])
-            .collect::<Vec<_>>(),
-    );
 
     frame.render_widget(Paragraph::new(text).block(block), area);
 }
@@ -492,17 +439,17 @@ pub enum LaunchButton {
 }
 
 fn launch_buttons(body: Rect) -> (Rect, Rect, Rect) {
-    let area = centered(58, 12, body);
+    let area = centered(58, 10, body);
     let inner = choice_block().inner(area);
 
-    let width = button_width(TAB) + button_width(FULL) + 2;
+    let width = TAB.len() as u16 + FULL.len() as u16 + 2;
     let x = inner.x + inner.width.saturating_sub(width) / 2;
     let y = inner.y + 4;
 
     (
         area,
-        Rect { x, y, width: button_width(TAB), height: BUTTON_HEIGHT },
-        Rect { x: x + button_width(TAB) + 2, y, width: button_width(FULL), height: BUTTON_HEIGHT },
+        Rect { x, y, width: TAB.len() as u16, height: 1 },
+        Rect { x: x + TAB.len() as u16 + 2, y, width: FULL.len() as u16, height: 1 },
     )
 }
 
@@ -553,23 +500,16 @@ pub fn draw_launch_choice(frame: &mut Frame, app: &AppService, body: Rect) {
         Line::from(Span::styled("A tab keeps lazyssh beside it", t.muted()))
             .alignment(Alignment::Center),
         Line::from(""),
+        Line::from(vec![
+            Span::raw(" ".repeat(lead)),
+            Span::styled(TAB, t.pill(&t.accent)),
+            Span::raw("  "),
+            Span::styled(FULL, t.selected()),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("t tab   f full screen   s settings   Esc cancel", t.muted()))
+            .alignment(Alignment::Center),
     ]);
-
-    let [top, middle, bottom] = button_row(&[(TAB, true), (FULL, false)], lead, t);
-    let text = Text::from(
-        text.lines
-            .into_iter()
-            .chain([Line::from(top), Line::from(middle), Line::from(bottom)])
-            .chain([
-                Line::from(""),
-                Line::from(Span::styled(
-                    "t tab   f full screen   s settings   Esc cancel",
-                    t.muted(),
-                ))
-                .alignment(Alignment::Center),
-            ])
-            .collect::<Vec<_>>(),
-    );
 
     frame.render_widget(Paragraph::new(text).block(block), area);
 }
