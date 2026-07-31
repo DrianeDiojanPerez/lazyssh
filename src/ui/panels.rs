@@ -360,22 +360,6 @@ fn detail_row<'a>(
 pub fn draw_status_bar(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
 
-    if let Some((message, is_error)) = &app.notification {
-        let (icon, style) = if *is_error {
-            ("  ✖ ", t.bold_error())
-        } else {
-            ("  ✔ ", t.success())
-        };
-
-        let line = Line::from(vec![
-            mode_chip(app),
-            Span::styled(format!("{}{}", icon, message), style),
-        ]);
-
-        frame.render_widget(Paragraph::new(line).style(t.status_bar()), area);
-        return;
-    }
-
     let mut spans = vec![mode_chip(app), Span::styled("  ", t.status_bar())];
     let mut used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
 

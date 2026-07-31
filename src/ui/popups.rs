@@ -27,7 +27,7 @@ pub fn draw_form(frame: &mut Frame, app: &AppService, title: &str, body: Rect) {
     let t = &app.theme;
     let fields = FormField::all();
 
-    let error = app.notification.as_ref().filter(|(_, is_error)| *is_error);
+    let error = app.form_error.as_ref();
 
     // two rows per field, a blank row between them, plus the footer block
     let content_height = (fields.len() * 3) as u16 + if error.is_some() { 2 } else { 1 };
@@ -69,7 +69,7 @@ pub fn draw_form(frame: &mut Frame, app: &AppService, title: &str, body: Rect) {
         lines.push(Line::from(""));
     }
 
-    if let Some((message, _)) = error {
+    if let Some(message) = error {
         lines.push(Line::from(Span::styled(format!("  {}", message), t.bold_error())));
     }
 

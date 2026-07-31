@@ -1,16 +1,26 @@
+use std::time::Duration;
+
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::models::Mode;
 use crate::repositories::{SshRepository, ThemeRepository};
 use crate::services::AppService;
 
+/// Waiting stops for a frame at a time while toasts are on screen so they can
+/// animate, and blocks outright when there is nothing left to move.
+const FRAME: Duration = Duration::from_millis(33);
+
 pub fn handle_next_event(
     app: &mut AppService,
     ssh_repo: &dyn SshRepository,
     theme_repo: &dyn ThemeRepository,
 ) -> std::io::Result<()> {
+    if app.has_toasts() && !event::poll(FRAME)? {
+        return Ok(());
+    }
+
     if let Event::Key(key) = event::read()? {
-        app.clear_notification();
+        app.clear_form_error();
 
         match &app.mode {
             Mode::Normal => on_normal(app, key, ssh_repo, theme_repo),

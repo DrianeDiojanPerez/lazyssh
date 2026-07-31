@@ -1,7 +1,10 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
-use crate::models::{Action, FormField, Mode, SshHost, Theme, ThemePreference};
+use crate::models::{Action, FormField, Mode, SshHost, Theme, ThemePreference, Toast};
 use crate::repositories::{SshRepository, ThemeRepository};
+
+const MAX_TOASTS: usize = 3;
 
 pub struct AppService {
     preamble: String,
@@ -24,7 +27,10 @@ pub struct AppService {
     pub search_query: String,
     pub visible_indices: Vec<usize>,
     pub show_command: bool,
-    pub notification: Option<(String, bool)>,
+    pub toasts: Vec<Toast>,
+    // INFO: a rejected form stays open, so its complaint belongs inside the
+    // form rather than in a toast that flies away
+    pub form_error: Option<String>,
     pub pending_action: Action,
 }
 
@@ -64,7 +70,8 @@ impl AppService {
             search_query: String::new(),
             visible_indices: (0..host_count).collect(),
             show_command: true,
-            notification: None,
+            toasts: Vec::new(),
+            form_error: None,
             pending_action: Action::Continue,
         }
     }
@@ -238,7 +245,7 @@ impl AppService {
         let draft = match self.build_draft() {
             Ok(draft) => draft,
             Err(message) => {
-                self.notification = Some((message, true));
+                self.form_error = Some(message);
                 return;
             }
         };
@@ -247,10 +254,7 @@ impl AppService {
             h.alias.to_lowercase() == draft.alias.to_lowercase()
         });
         if alias_exists {
-            self.notification = Some((
-                format!("'{}' already exists", draft.alias),
-                true,
-            ));
+            self.form_error = Some(format!("'{}' already exists", draft.alias));
             return;
         }
 
@@ -258,12 +262,10 @@ impl AppService {
         self.hosts.push(draft);
 
         match ssh_repo.save_all(&self.preamble, &self.hosts) {
-            Ok(_) => {
-                self.notification = Some((format!("Added '{}'", name), false));
-            }
+            Ok(_) => self.toast(Toast::success(format!("Added '{}'", name))),
             Err(e) => {
                 self.hosts.pop();
-                self.notification = Some((e, true));
+                self.toast(Toast::error(e));
             }
         }
 
@@ -275,7 +277,7 @@ impl AppService {
         let draft = match self.build_draft() {
             Ok(draft) => draft,
             Err(message) => {
-                self.notification = Some((message, true));
+                self.form_error = Some(message);
                 return;
             }
         };
@@ -284,10 +286,7 @@ impl AppService {
             i != index && h.alias.to_lowercase() == draft.alias.to_lowercase()
         });
         if duplicate {
-            self.notification = Some((
-                format!("'{}' already exists", draft.alias),
-                true,
-            ));
+            self.form_error = Some(format!("'{}' already exists", draft.alias));
             return;
         }
 
@@ -296,12 +295,10 @@ impl AppService {
         self.hosts[index] = draft;
 
         match ssh_repo.save_all(&self.preamble, &self.hosts) {
-            Ok(_) => {
-                self.notification = Some((format!("Updated '{}'", name), false));
-            }
+            Ok(_) => self.toast(Toast::success(format!("Updated '{}'", name))),
             Err(e) => {
                 self.hosts[index] = backup;
-                self.notification = Some((e, true));
+                self.toast(Toast::error(e));
             }
         }
 
@@ -313,15 +310,10 @@ impl AppService {
         let removed = self.hosts.remove(index);
 
         match ssh_repo.save_all(&self.preamble, &self.hosts) {
-            Ok(_) => {
-                self.notification = Some((
-                    format!("Deleted '{}'", removed.alias),
-                    false,
-                ));
-            }
+            Ok(_) => self.toast(Toast::success(format!("Deleted '{}'", removed.alias))),
             Err(e) => {
                 self.hosts.insert(index, removed);
-                self.notification = Some((e, true));
+                self.toast(Toast::error(e));
             }
         }
 
@@ -439,7 +431,8 @@ impl AppService {
             self.theme_preference.transparent = self.theme.transparent;
             theme_repo.save_preference(&self.theme_preference);
 
-            self.notification = Some((format!("Theme: {}", new_theme.name), false));
+            let name = new_theme.name.clone();
+            self.toast(Toast::success(format!("Theme: {}", name)));
         }
         self.mode = Mode::Normal;
     }
@@ -450,7 +443,7 @@ impl AppService {
         theme_repo.save_preference(&self.theme_preference);
 
         let label = if self.theme.transparent { "ON" } else { "OFF" };
-        self.notification = Some((format!("Transparency: {}", label), false));
+        self.toast(Toast::success(format!("Transparency: {}", label)));
     }
 
     // ─── Misc ────────────────────────────────────────────────────────────
@@ -464,10 +457,7 @@ impl AppService {
         self.preamble = preamble;
         self.hosts = hosts;
         self.rebuild_filter();
-        self.notification = Some((
-            format!("Reloaded ({} hosts)", self.hosts.len()),
-            false,
-        ));
+        self.toast(Toast::success(format!("Reloaded ({} hosts)", self.hosts.len())));
     }
 
     pub fn open_help(&mut self) {
@@ -478,8 +468,29 @@ impl AppService {
         self.pending_action = Action::Quit;
     }
 
-    pub fn clear_notification(&mut self) {
-        self.notification = None;
+    pub fn clear_form_error(&mut self) {
+        self.form_error = None;
+    }
+
+    fn toast(&mut self, toast: Toast) {
+        // INFO: a corner full of toasts hides the app, so the oldest gives way
+        if self.toasts.len() == MAX_TOASTS {
+            self.toasts.remove(0);
+        }
+        self.toasts.push(toast);
+    }
+
+    /// Ages every toast by the time the last frame took and drops the ones
+    /// that have finished, which is what makes them animate.
+    pub fn advance_toasts(&mut self, delta: Duration) {
+        for toast in &mut self.toasts {
+            toast.advance(delta);
+        }
+        self.toasts.retain(|toast| !toast.is_finished());
+    }
+
+    pub fn has_toasts(&self) -> bool {
+        !self.toasts.is_empty()
     }
 
     pub fn take_action(&mut self) -> Action {
@@ -559,7 +570,7 @@ mod tests {
 
         assert_eq!(app.host_count(), 0);
         assert_eq!(app.mode, Mode::AddHost);
-        assert!(app.notification.as_ref().is_some_and(|(_, is_error)| *is_error));
+        assert!(app.form_error.is_some());
     }
 
     #[test]

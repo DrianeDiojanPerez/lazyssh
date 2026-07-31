@@ -94,11 +94,6 @@ impl Theme {
         Style::default().fg(self.error.to_color()).bg(self.background())
     }
 
-    pub fn success(&self) -> Style {
-        Style::default().fg(self.success.to_color()).bg(self.background())
-    }
-
-
     pub fn muted(&self) -> Style {
         Style::default().fg(self.muted.to_color()).bg(self.background())
     }
