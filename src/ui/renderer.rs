@@ -501,9 +501,24 @@ mod tests {
         let screen = screenshot::draw(&app, 84, 22);
         let row = row_of(&screen, "In a tab");
 
-        assert!(
-            screen.contains("▸ In a tab"),
-            "the answer under the cursor is not marked:\n{}",
+        let filled = |screen: &str, label: &str| {
+            let row = row_of(screen, label);
+            screenshot::buffer(&app, 84, 22)
+                .get(column_of(screen, row, label), row)
+                .style()
+                .bg
+        };
+
+        assert_eq!(
+            filled(&screen, "In a tab"),
+            Some(app.theme.accent.to_color()),
+            "the answer under the cursor should be the filled one:\n{}",
+            screen
+        );
+        assert_ne!(
+            filled(&screen, "Whole terminal"),
+            Some(app.theme.accent.to_color()),
+            "only one answer should be filled:\n{}",
             screen
         );
         assert_eq!(
@@ -521,9 +536,13 @@ mod tests {
 
         app.launch_cursor_right();
         let moved = screenshot::draw(&app, 84, 22);
-        assert!(
-            moved.contains("▸ Whole terminal"),
-            "the arrows should move the marker:\n{}",
+        let row = row_of(&moved, "Whole terminal");
+        let buffer = screenshot::buffer(&app, 84, 22);
+
+        assert_eq!(
+            buffer.get(column_of(&moved, row, "Whole terminal"), row).style().bg,
+            Some(app.theme.accent.to_color()),
+            "the arrows should move the fill:\n{}",
             moved
         );
     }

@@ -522,12 +522,14 @@ pub fn draw_launch_choice(frame: &mut Frame, app: &AppService, body: Rect) {
     frame.render_widget(Paragraph::new(text).block(block), area);
 }
 
-/// The answer under the cursor is filled in and pointed at; the other is left
-/// plain, so there is no doubt which one Enter would take.
+/// The answer under the cursor is filled in; the other fades back, so there is
+/// no doubt which one Enter would take.
 fn choice<'a>(label: &'a str, is_picked: bool, t: &crate::models::Theme) -> Span<'a> {
+    let text = format!("  {}  ", label);
+
     match is_picked {
-        true => Span::styled(format!(" ▸ {} ", label), t.pill(&t.accent)),
-        false => Span::styled(format!("   {} ", label), t.muted()),
+        true => Span::styled(text, t.pill(&t.accent)),
+        false => Span::styled(text, t.muted().add_modifier(Modifier::DIM)),
     }
 }
 
