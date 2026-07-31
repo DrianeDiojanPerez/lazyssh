@@ -126,7 +126,30 @@ fn dispatch_key(
         Mode::EditHost(_) => on_form(app, key, ssh_repo),
         Mode::ConfirmDelete(idx) => on_confirm_delete(app, key, *idx, ssh_repo),
         Mode::SelectTheme => on_theme_select(app, key, theme_repo),
+        Mode::ChooseLaunch => on_choose_launch(app, key),
+        Mode::Settings => on_settings(app, key, theme_repo),
         Mode::Help => on_help(app, key),
+    }
+}
+
+/// The one question asked when a connection is made and the settings say to
+/// ask: a tab, or the whole terminal.
+fn on_choose_launch(app: &mut AppService, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => app.cancel_mode(),
+        KeyCode::Char('f') | KeyCode::Char('F') => app.launch_full_screen(),
+        KeyCode::Char('t') | KeyCode::Char('T') | KeyCode::Enter => open_session(app),
+        _ => {}
+    }
+}
+
+fn on_settings(app: &mut AppService, key: KeyEvent, theme_repo: &dyn ThemeRepository) {
+    match key.code {
+        KeyCode::Esc => app.cancel_mode(),
+        KeyCode::Up | KeyCode::Char('k') => app.settings_cursor_up(),
+        KeyCode::Down | KeyCode::Char('j') => app.settings_cursor_down(),
+        KeyCode::Enter => app.apply_settings_choice(theme_repo),
+        _ => {}
     }
 }
 
@@ -236,6 +259,19 @@ fn on_mouse(
             }
         }
 
+        Mode::ChooseLaunch => match popups::launch_button_at(frames.body, column, row) {
+            Some(popups::LaunchButton::Tab) => open_session(app),
+            Some(popups::LaunchButton::FullScreen) => app.launch_full_screen(),
+            None => {}
+        },
+
+        Mode::Settings => {
+            if let Some(index) = popups::setting_at(frames.body, column, row) {
+                app.settings_cursor = index;
+                app.apply_settings_choice(theme_repo);
+            }
+        }
+
         Mode::Help => app.cancel_mode(),
     }
 
@@ -272,7 +308,7 @@ fn on_normal(
         KeyCode::Char('g') => app.jump_to_top(),
         KeyCode::Char('G') => app.jump_to_bottom(),
 
-        KeyCode::Enter => open_session(app),
+        KeyCode::Enter => request_connection(app),
         KeyCode::Char('w') => app.close_active_tab(),
         KeyCode::Char('n') => app.next_tab(),
         KeyCode::Char('a') => app.begin_add(),
@@ -282,6 +318,7 @@ fn on_normal(
         KeyCode::Char('/') => app.enter_search(),
         KeyCode::Char('r') => app.reload_from_disk(ssh_repo),
 
+        KeyCode::Char('s') => app.open_settings(),
         KeyCode::Char('t') => app.open_theme_selector(),
         KeyCode::Char('T') => app.toggle_transparency(theme_repo),
         KeyCode::Char('?') => app.open_help(),
@@ -293,12 +330,22 @@ fn on_normal(
 /// The session is opened at the size of the pane it is about to be drawn in,
 /// so the remote end never has to be told twice.
 fn open_session(app: &mut AppService) {
-    let Ok((width, height)) = terminal::size() else {
-        return;
-    };
+    if let Some((rows, columns)) = pane_size(app) {
+        app.open_session(rows, columns);
+    }
+}
 
+fn request_connection(app: &mut AppService) {
+    if let Some((rows, columns)) = pane_size(app) {
+        app.request_connection(rows, columns);
+    }
+}
+
+fn pane_size(app: &AppService) -> Option<(u16, u16)> {
+    let (width, height) = terminal::size().ok()?;
     let pane = renderer::frames(app, Rect::new(0, 0, width, height)).main;
-    app.open_session(pane.height.saturating_sub(2), pane.width.saturating_sub(2));
+
+    Some((pane.height.saturating_sub(2), pane.width.saturating_sub(2)))
 }
 
 fn on_search(app: &mut AppService, key: KeyEvent) {

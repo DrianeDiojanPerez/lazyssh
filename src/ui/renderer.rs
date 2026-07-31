@@ -106,6 +106,8 @@ pub fn render(frame: &mut Frame, app: &AppService) {
         Mode::EditHost(_) => popups::draw_form(frame, app, " Edit host ", body),
         Mode::ConfirmDelete(idx) => popups::draw_delete_confirmation(frame, app, *idx, body),
         Mode::SelectTheme => popups::draw_theme_selector(frame, app, body),
+        Mode::ChooseLaunch => popups::draw_launch_choice(frame, app, body),
+        Mode::Settings => popups::draw_settings(frame, app, body),
         Mode::Help => popups::draw_help(frame, app, body),
         _ => {}
     }
@@ -450,6 +452,51 @@ mod tests {
             crate::ui::tabs::tab_at(&app, tabs, column_of(&screen, tabs.y, "×"), tabs.y),
             Some(crate::ui::tabs::TabHit::Close(0)),
             "clicking the cross should close it:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn the_connect_question_offers_both_ways_and_answers_to_clicks() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.request_connection(20, 40);
+
+        assert_eq!(app.mode, crate::models::Mode::ChooseLaunch, "asking is the default");
+
+        let body = super::frames(&app, Rect::new(0, 0, 84, 22)).body;
+        let screen = screenshot::draw(&app, 84, 22);
+        let row = row_of(&screen, " In a tab ");
+
+        assert_eq!(
+            crate::ui::popups::launch_button_at(body, column_of(&screen, row, " In a tab ") + 1, row),
+            Some(crate::ui::popups::LaunchButton::Tab),
+            "the tab button is not where it is drawn:\n{}",
+            screen
+        );
+        assert_eq!(
+            crate::ui::popups::launch_button_at(
+                body,
+                column_of(&screen, row, " Whole terminal ") + 1,
+                row
+            ),
+            Some(crate::ui::popups::LaunchButton::FullScreen),
+            "the full screen button is not where it is drawn:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn the_settings_rows_answer_to_clicks() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.open_settings();
+
+        let body = super::frames(&app, Rect::new(0, 0, 84, 22)).body;
+        let screen = screenshot::draw(&app, 84, 22);
+
+        assert_eq!(
+            crate::ui::popups::setting_at(body, 40, row_of(&screen, "Take the whole terminal")),
+            Some(2),
+            "the third setting is not where it is drawn:\n{}",
             screen
         );
     }

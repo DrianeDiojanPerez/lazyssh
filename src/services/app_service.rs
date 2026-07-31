@@ -374,12 +374,47 @@ impl AppService {
 
     // ─── SSH Execution ───────────────────────────────────────────────────
 
+    /// Starts a connection the way the settings say to: in a tab, in the whole
+    /// terminal, or by asking which of the two this time.
+    pub fn request_connection(&mut self, rows: u16, columns: u16) {
+        if self.selected_host().is_none() {
+            return;
+        }
+
+        match self.theme_preference.launch_style {
+            LaunchStyle::Ask => self.mode = Mode::ChooseLaunch,
+            LaunchStyle::Tab => self.open_session(rows, columns),
+            LaunchStyle::FullScreen => self.launch_full_screen(),
+        }
+    }
+
+    /// Hands the whole terminal to ssh, the way lazyssh used to.
+    pub fn launch_full_screen(&mut self) {
+        if let Some(host) = self.selected_host() {
+            self.pending_action = Action::LaunchSsh(host.as_ssh_args());
+        }
+        self.mode = Mode::Normal;
+    }
+
+    pub fn open_settings(&mut self) {
+        self.settings_cursor = LaunchStyle::all()
+            .iter()
+            .position(|style| *style == self.theme_preference.launch_style)
+            .unwrap_or(0);
+        self.mode = Mode::Settings;
+    }
+
     pub fn settings_cursor_up(&mut self) {
         self.settings_cursor = self.settings_cursor.saturating_sub(1);
     }
 
     pub fn settings_cursor_down(&mut self) {
         self.settings_cursor = (self.settings_cursor + 1).min(LaunchStyle::all().len() - 1);
+    }
+
+    pub fn apply_settings_choice(&mut self, theme_repo: &dyn ThemeRepository) {
+        self.choose_launch_style(LaunchStyle::all()[self.settings_cursor], theme_repo);
+        self.mode = Mode::Normal;
     }
 
     pub fn choose_launch_style(&mut self, style: LaunchStyle, theme_repo: &dyn ThemeRepository) {
@@ -884,12 +919,40 @@ mod tests {
     }
 
     #[test]
-    fn a_chosen_way_is_kept_for_next_time() {
+    fn the_old_way_hands_the_whole_terminal_over() {
+        let (mut app, _repo) = app_with(vec![host("box", 22)]);
+        app.choose_launch_style(LaunchStyle::FullScreen, &crate::test_support::StubThemeRepo);
+
+        app.request_connection(20, 40);
+
+        assert!(
+            matches!(app.take_action(), Action::LaunchSsh(args) if args.contains(&"box".to_string())),
+            "full screen should hand ssh the terminal"
+        );
+        assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn asking_puts_the_question_before_connecting() {
         let (mut app, _repo) = app_with(vec![host("box", 22)]);
 
-        app.choose_launch_style(LaunchStyle::Tab, &crate::test_support::StubThemeRepo);
+        app.request_connection(20, 40);
+
+        assert_eq!(app.launch_style(), LaunchStyle::Ask, "asking is the default");
+        assert_eq!(app.mode, Mode::ChooseLaunch);
+        assert!(matches!(app.take_action(), Action::Continue), "nothing has started yet");
+    }
+
+    #[test]
+    fn a_chosen_way_is_kept_for_next_time() {
+        let (mut app, _repo) = app_with(vec![host("box", 22)]);
+        app.open_settings();
+        app.settings_cursor_down();
+
+        app.apply_settings_choice(&crate::test_support::StubThemeRepo);
 
         assert_eq!(app.launch_style(), LaunchStyle::Tab);
+        assert_eq!(app.mode, Mode::Normal);
     }
 
     #[test]

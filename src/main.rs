@@ -7,6 +7,7 @@ mod test_support;
 mod ui;
 
 use std::io;
+use std::process::Command;
 use std::time::Instant;
 
 use crossterm::{
@@ -43,16 +44,53 @@ pub fn main() -> io::Result<()> {
 
     let mut app = AppService::initialize(&ssh_repo, &theme_repo);
 
-    run_tui(&mut app, &ssh_repo, &theme_repo)?;
+    loop {
+        match run_tui(&mut app, &ssh_repo, &theme_repo)? {
+            Action::LaunchSsh(args) => {
+                run_in_the_whole_terminal(args);
+                app.reload_from_disk(&ssh_repo);
+            }
+            _ => break,
+        }
+    }
 
     Ok(())
+}
+
+/// The old way of connecting: the interface steps aside, ssh gets the terminal
+/// to itself, and lazyssh comes back when it is done.
+fn run_in_the_whole_terminal(args: Vec<String>) {
+    let display = args.join(" ");
+    println!("\x1b[1;36m══ ssh {} ══\x1b[0m\n", display);
+
+    let status = Command::new("ssh")
+        .args([
+            "-o",
+            "ConnectTimeout=1",
+            "-o",
+            "ServerAliveInterval=2",
+            "-o",
+            "ServerAliveCountMax=2",
+        ])
+        .args(&args)
+        .status();
+
+    match status {
+        Ok(exit) => println!(
+            "\n\x1b[1;33m═══ session ended (exit: {}) ═══\x1b[0m",
+            exit.code().unwrap_or(-1)
+        ),
+        Err(e) => println!("\n\x1b[1;31m═══ ssh failed: {} ═══\x1b[0m", e),
+    }
+
+    println!("\x1b[90mReturning to lazyssh...\x1b[0m\n");
 }
 
 fn run_tui(
     app: &mut AppService,
     ssh_repo: &FileSshRepository,
     theme_repo: &FileThemeRepository,
-) -> io::Result<()> {
+) -> io::Result<Action> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -63,7 +101,7 @@ fn run_tui(
     let mut last_frame = Instant::now();
     let mut clicks = input::Clicks::default();
 
-    loop {
+    let action = loop {
         // INFO: the pty is told the size of the pane before it is drawn, so
         // the remote end lays out for the space it actually has
         let area = terminal.size()?;
@@ -86,10 +124,11 @@ fn run_tui(
         }
         last_frame = now;
 
-        if let Action::Quit = app.take_action() {
-            break;
+        let action = app.take_action();
+        if !matches!(action, Action::Continue) {
+            break action;
         }
-    }
+    };
 
     disable_raw_mode()?;
     execute!(
@@ -99,5 +138,5 @@ fn run_tui(
     )?;
     terminal.show_cursor()?;
 
-    Ok(())
+    Ok(action)
 }

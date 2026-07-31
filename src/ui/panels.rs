@@ -520,6 +520,8 @@ fn mode_chip<'a>(app: &AppService) -> Span<'a> {
         Mode::EditHost(_) => "EDIT",
         Mode::ConfirmDelete(_) => "DELETE",
         Mode::SelectTheme => "THEME",
+        Mode::ChooseLaunch => "CONNECT",
+        Mode::Settings => "SETTINGS",
         Mode::Help => "HELP",
     };
 
@@ -537,7 +539,8 @@ fn escape_hint(app: &AppService) -> (&'static str, &'static str, KeyCode) {
         Mode::Search => ("Esc", "clear", KeyCode::Esc),
         Mode::AddHost | Mode::EditHost(_) => ("Esc", "cancel", KeyCode::Esc),
         Mode::ConfirmDelete(_) => ("Esc", "keep", KeyCode::Esc),
-        Mode::SelectTheme | Mode::Help => ("Esc", "close", KeyCode::Esc),
+        Mode::SelectTheme | Mode::Settings | Mode::Help => ("Esc", "close", KeyCode::Esc),
+        Mode::ChooseLaunch => ("Esc", "cancel", KeyCode::Esc),
     }
 }
 
@@ -560,6 +563,7 @@ fn hints_for(app: &AppService) -> &'static [(&'static str, &'static str, KeyCode
             ("c", "command", KeyCode::Char('c')),
             ("r", "reload", KeyCode::Char('r')),
             ("w", "close tab", KeyCode::Char('w')),
+            ("s", "settings", KeyCode::Char('s')),
             ("t", "theme", KeyCode::Char('t')),
             ("T", "transparency", KeyCode::Char('T')),
         ],
@@ -577,6 +581,14 @@ fn hints_for(app: &AppService) -> &'static [(&'static str, &'static str, KeyCode
         Mode::SelectTheme => &[
             ("↑↓", "browse", KeyCode::Null),
             ("↵", "apply", KeyCode::Enter),
+        ],
+        Mode::ChooseLaunch => &[
+            ("t", "in a tab", KeyCode::Char('t')),
+            ("f", "whole terminal", KeyCode::Char('f')),
+        ],
+        Mode::Settings => &[
+            ("↑↓", "browse", KeyCode::Null),
+            ("↵", "choose", KeyCode::Enter),
         ],
         Mode::Help => &[],
     }

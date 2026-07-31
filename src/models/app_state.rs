@@ -8,6 +8,8 @@ pub enum Mode {
     EditHost(usize),
     ConfirmDelete(usize),
     SelectTheme,
+    ChooseLaunch,
+    Settings,
     Help,
 }
 
