@@ -35,8 +35,9 @@ pub fn frames(app: &AppService, area: Rect) -> Frames {
         .constraints([
             // INFO: the tab row is always there, empty or not, so opening the
             // first connection does not shove the whole screen down a line,
-            // and it is a panel like the others, so it takes their three rows
-            Constraint::Length(3),
+            // as a panel it takes the three rows the others do, and as a bare
+            // row it takes one with a blank line under it
+            Constraint::Length(if app.tab_panel() { 3 } else { 2 }),
             Constraint::Min(5),
             Constraint::Length(1),
         ])
@@ -669,6 +670,7 @@ mod tests {
             ("Theme", 3),
             ("Transparency", 4),
             ("Slanted tabs", 5),
+            ("Tabs in a panel", 6),
         ] {
             assert_eq!(
                 crate::ui::popups::setting_at(body, 40, row_of(&screen, label)),
@@ -693,6 +695,34 @@ mod tests {
         assert!(bottom.contains("? help"), "the bar lost its hints:\n{}", screen);
         assert!(bottom.contains(".ssh/config"), "the bar lost the config path:\n{}", screen);
         assert!(bottom.contains("3 hosts"), "the bar lost the host count:\n{}", screen);
+    }
+
+    #[test]
+    fn the_tabs_can_step_out_of_their_panel() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.sessions.push(
+            crate::services::Session::spawn("server-01", "sleep", &["5".into()], 20, 40)
+                .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+
+        let framed = screenshot::draw(&app, 100, 20);
+        assert!(framed.contains("╭ Tabs"), "the tabs start in a panel:\n{}", framed);
+
+        app.toggle_tab_panel(&crate::test_support::StubThemeRepo);
+        let bare = screenshot::draw(&app, 100, 20);
+
+        assert!(!bare.contains("╭ Tabs"), "the panel should be gone:\n{}", bare);
+        assert!(bare.contains("tabs"), "the label takes its place:\n{}", bare);
+
+        // whichever way the row is drawn, a click still lands on the tab
+        let tabs = super::frames(&app, Rect::new(0, 0, 100, 20)).tabs;
+        assert_eq!(
+            crate::ui::tabs::tab_at(&app, tabs, column_of(&bare, tabs.y, "server-01"), tabs.y),
+            Some(crate::ui::tabs::TabHit::Select(0)),
+            "a bare row should still answer to clicks:\n{}",
+            bare
+        );
     }
 
     #[test]

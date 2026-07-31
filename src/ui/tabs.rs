@@ -16,9 +16,17 @@ const CLOSE: &str = "×";
 const TAB_LEFT: &str = "\u{e0be}";
 const TAB_RIGHT: &str = "\u{e0b8}";
 
-/// The tabs sit on the one line inside the panel.
-fn label_row(area: Rect) -> u16 {
-    area.y + 1
+/// The label the row opens with when the tabs are not in a panel of their own.
+const BADGE: &str = " tabs ";
+
+fn badge_width(app: &AppService) -> u16 {
+    BADGE.chars().count() as u16 + 1 + u16::from(app.tab_edges())
+}
+
+/// The tabs sit inside the panel when there is one, and on the top line of
+/// the row when there is not.
+fn label_row(app: &AppService, area: Rect) -> u16 {
+    area.y + u16::from(app.tab_panel())
 }
 
 /// The panel they sit in, titled the way the others are.
@@ -47,8 +55,11 @@ fn layout(app: &AppService) -> Vec<(u16, String, usize)> {
     let mut placed = Vec::new();
     // INFO: the row starts hard against the left edge, so nothing is indented
     // away from the corner of the screen
-    // the border and the padding it carries
-    let mut x = 2;
+    // the border and the padding it carries, or the label in its place
+    let mut x = match app.tab_panel() {
+        true => 2,
+        false => badge_width(app),
+    };
     let edges = u16::from(app.tab_edges()) * 2;
 
     for (index, session) in app.sessions.iter().enumerate() {
@@ -66,7 +77,7 @@ fn layout(app: &AppService) -> Vec<(u16, String, usize)> {
 }
 
 pub fn tab_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<TabHit> {
-    if row != label_row(area) {
+    if row != label_row(app, area) {
         return None;
     }
 
@@ -96,7 +107,10 @@ fn width_of(app: &AppService, label: &str) -> u16 {
 pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
     let edges = app.tab_edges();
-    let mut spans: Vec<Span> = Vec::new();
+    let mut spans: Vec<Span> = match app.tab_panel() {
+        true => Vec::new(),
+        false => label_pill(BADGE, t.accent_secondary.to_color(), t.pill(&t.accent_secondary), t, edges),
+    };
 
     for (_, label, index) in layout(app) {
         let is_active = app.active_tab == Some(index);
@@ -110,7 +124,31 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
         spans.extend(tab_pill(&label, colour, fill, t, edges));
     }
 
-    frame.render_widget(Paragraph::new(Line::from(spans)).block(block(app)), area);
+    let line = Line::from(spans);
+
+    match app.tab_panel() {
+        true => frame.render_widget(Paragraph::new(line).block(block(app)), area),
+        false => frame.render_widget(Paragraph::new(line).style(t.base()), area),
+    }
+}
+
+/// The row's label, slanted on its right the same way a tab is, and left as a
+/// plain block when the tabs are.
+fn label_pill<'a>(
+    label: &str,
+    colour: ratatui::style::Color,
+    fill: ratatui::style::Style,
+    t: &crate::models::Theme,
+    edges: bool,
+) -> Vec<Span<'a>> {
+    let mut spans = vec![Span::styled(label.to_string(), fill)];
+
+    if edges {
+        spans.push(Span::styled(TAB_RIGHT, t.base().fg(colour)));
+    }
+    spans.push(Span::raw(" "));
+
+    spans
 }
 
 /// A tab, slanted at both ends. The slants are drawn in the colour the tab is
