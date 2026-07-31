@@ -489,9 +489,9 @@ mod tests {
             screen
         );
         assert_eq!(
-            crate::ui::tabs::tab_at(&app, tabs, column_of(&screen, label, "server-01") - 1, label),
+            crate::ui::tabs::tab_at(&app, tabs, column_of(&screen, label, "server-01") - 2, label),
             Some(crate::ui::tabs::TabHit::Select(0)),
-            "the padding belongs to its tab:\n{}",
+            "the slanted end belongs to its tab:\n{}",
             screen
         );
     }

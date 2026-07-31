@@ -17,8 +17,12 @@ fn badge_width() -> u16 {
     BADGE.chars().count() as u16 + 2
 }
 
-/// The powerline point that finishes a tab off on its right.
-const RIGHT_CAP: &str = "\u{e0b0}";
+/// The powerline point that finishes the label off on its right.
+const ARROW: &str = "\u{e0b0}";
+
+/// The half triangles that slant a tab off at each end.
+const TAB_LEFT: &str = "\u{e0ba}";
+const TAB_RIGHT: &str = "\u{e0b8}";
 
 /// What a click on the tab bar meant.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -42,8 +46,8 @@ fn layout(app: &AppService) -> Vec<(u16, String, usize)> {
         let label = format!(" {}{} {} ", mark, session.alias, CLOSE);
 
         placed.push((x, label.clone(), index));
-        // the point, then a space before the next tab
-        x += label.chars().count() as u16 + 2;
+        // a slant at each end, then a space before the next tab
+        x += label.chars().count() as u16 + 3;
     }
 
     placed
@@ -70,7 +74,7 @@ pub fn tab_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<Tab
 }
 
 fn width_of(label: &str) -> u16 {
-    label.chars().count() as u16 + 1
+    label.chars().count() as u16 + 2
 }
 
 /// Tabs are cards of their own: the one you are looking at is filled in and
@@ -79,7 +83,7 @@ fn width_of(label: &str) -> u16 {
 /// the rest sit back on a quieter surface.
 pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
-    let mut spans = pill(BADGE, t.accent_secondary.to_color(), t.pill(&t.accent_secondary), t);
+    let mut spans = label_pill(BADGE, t.accent_secondary.to_color(), t.pill(&t.accent_secondary), t);
 
     for (_, label, index) in layout(app) {
         let is_active = app.active_tab == Some(index);
@@ -90,15 +94,14 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
             _ => (t.input_bg.to_color(), t.surface()),
         };
 
-        spans.extend(pill(&label, colour, fill, t));
+        spans.extend(tab_pill(&label, colour, fill, t));
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)).style(t.base()), area);
 }
 
-/// A label brought to a point on its right. The point is drawn in the colour
-/// the tab is filled with, on the page behind it, which is what shapes it.
-fn pill<'a>(
+/// The row's label, brought to a point on its right.
+fn label_pill<'a>(
     label: &str,
     colour: ratatui::style::Color,
     fill: ratatui::style::Style,
@@ -106,7 +109,25 @@ fn pill<'a>(
 ) -> Vec<Span<'a>> {
     vec![
         Span::styled(label.to_string(), fill),
-        Span::styled(RIGHT_CAP, t.base().fg(colour)),
+        Span::styled(ARROW, t.base().fg(colour)),
+        Span::raw(" "),
+    ]
+}
+
+/// A tab, slanted at both ends. The slants are drawn in the colour the tab is
+/// filled with, on the page behind it, which is what shapes them.
+fn tab_pill<'a>(
+    label: &str,
+    colour: ratatui::style::Color,
+    fill: ratatui::style::Style,
+    t: &crate::models::Theme,
+) -> Vec<Span<'a>> {
+    let slant = t.base().fg(colour);
+
+    vec![
+        Span::styled(TAB_LEFT, slant),
+        Span::styled(label.to_string(), fill),
+        Span::styled(TAB_RIGHT, slant),
         Span::raw(" "),
     ]
 }
