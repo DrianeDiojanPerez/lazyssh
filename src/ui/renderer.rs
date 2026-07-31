@@ -71,8 +71,11 @@ pub fn render(frame: &mut Frame, app: &AppService) {
     panels::draw_detail_panel(frame, app, frames.details);
     panels::draw_status_bar(frame, app, frames.status);
 
+    // INFO: toasts belong to the screen, not to the panels, so they hang in
+    // the very corner rather than starting where the details do
+    toasts::draw(frame, app, area);
+
     let body = frames.body;
-    toasts::draw(frame, app, body);
     match &app.mode {
         Mode::AddHost => popups::draw_form(frame, app, " Add host ", body),
         Mode::EditHost(_) => popups::draw_form(frame, app, " Edit host ", body),
@@ -161,9 +164,10 @@ mod tests {
             .find(|line| line.contains('├'))
             .unwrap_or_else(|| panic!("the toast has no divider:\n{}", screen));
 
-        assert!(divider.ends_with('┤'), "the divider stops short of the border:\n{}", screen);
+        let (_, toast_part) = divider.split_once('├').unwrap();
+        assert!(toast_part.ends_with('┤'), "the divider stops short of the border:\n{}", screen);
         assert!(
-            !divider.contains("─ ") && !divider.contains(" ─"),
+            !toast_part.contains(' '),
             "the divider has a gap in it:\n{}",
             screen
         );

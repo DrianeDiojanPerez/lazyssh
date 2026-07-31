@@ -9,15 +9,16 @@ use ratatui::{
 use crate::models::{Toast, ToastKind};
 use crate::services::AppService;
 
-const MAX_WIDTH: u16 = 46;
-const MIN_WIDTH: u16 = 24;
-const HEIGHT: u16 = 5;
+const MAX_WIDTH: u16 = 56;
+const MIN_WIDTH: u16 = 34;
+/// Two borders, the title, its divider and two lines for the message.
+const HEIGHT: u16 = 6;
 const GAP: u16 = 1;
 
-/// Toasts float over the top right corner, newest underneath, each one sliding
-/// out of the right edge and back into it when its time is up.
+/// Toasts float in the very top right corner of the screen, newest underneath,
+/// each one sliding out of the right edge and back into it when its time is up.
 pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
-    let mut top = area.y + 1;
+    let mut top = area.y;
 
     for toast in &app.toasts {
         if top + HEIGHT > area.bottom() {
@@ -40,7 +41,7 @@ fn draw_one(frame: &mut Frame, app: &AppService, toast: &Toast, area: Rect, top:
 
     let heading = format!("{} {}", icon, title);
     let content = (heading.chars().count() + toast.at.chars().count() + 2)
-        .max(toast.message.chars().count());
+        .max(toast.message.chars().count().min(MAX_WIDTH as usize));
 
     // the borders and a column of air on each side
     let full_width = (content as u16 + 4).clamp(MIN_WIDTH, MAX_WIDTH).min(area.width);
@@ -66,7 +67,7 @@ fn draw_one(frame: &mut Frame, app: &AppService, toast: &Toast, area: Rect, top:
 
     let text_width = rect.width.saturating_sub(4) as usize;
 
-    let lines = vec![
+    let mut lines = vec![
         Line::from(vec![
             Span::styled(
                 ellipsize(&heading, text_width),
@@ -77,11 +78,10 @@ fn draw_one(frame: &mut Frame, app: &AppService, toast: &Toast, area: Rect, top:
         // the divider is painted straight onto the frame afterwards so it can
         // run into the side borders instead of stopping short of them
         Line::from(""),
-        Line::from(Span::styled(
-            ellipsize(&toast.message, text_width),
-            t.base().add_modifier(Modifier::BOLD),
-        )),
     ];
+    for line in wrap(&toast.message, text_width, 2) {
+        lines.push(Line::from(Span::styled(line, t.base().add_modifier(Modifier::BOLD))));
+    }
 
     frame.render_widget(Paragraph::new(lines).block(block), rect);
     draw_divider(frame, rect, color.to_color());
@@ -128,6 +128,34 @@ fn draw_life_bar(frame: &mut Frame, toast: &Toast, rect: Rect, color: ratatui::s
             .set_symbol("━")
             .set_style(Style::default().fg(color));
     }
+}
+
+/// Breaks a message over at most `rows` lines on word boundaries, so a long
+/// error reads as a sentence instead of being cut off at the border.
+fn wrap(text: &str, width: usize, rows: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+
+    for word in text.split_whitespace() {
+        match lines.last_mut() {
+            Some(line) if line.chars().count() + 1 + word.chars().count() <= width => {
+                line.push(' ');
+                line.push_str(word);
+            }
+            _ => {
+                if lines.len() == rows {
+                    break;
+                }
+                lines.push(word.to_string());
+            }
+        }
+    }
+
+    // whatever is left over is squeezed onto the last line it can have
+    if let Some(last) = lines.last_mut() {
+        *last = ellipsize(last, width);
+    }
+    lines.truncate(rows);
+    lines
 }
 
 fn ellipsize(text: &str, limit: usize) -> String {
