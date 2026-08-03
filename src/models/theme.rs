@@ -84,12 +84,6 @@ impl Theme {
         Style::default().fg(self.accent_secondary.to_color()).bg(self.background())
     }
 
-    pub fn status_bar(&self) -> Style {
-        Style::default()
-            .fg(self.status_bar_fg.to_color())
-            .bg(if self.transparent { Color::Reset } else { self.status_bar_bg.to_color() })
-    }
-
     pub fn surface(&self) -> Style {
         Style::default()
             .fg(self.fg.to_color())
