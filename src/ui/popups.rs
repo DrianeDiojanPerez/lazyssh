@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::models::{FormField, Setting};
-use crate::services::AppService;
+use crate::services::{AppService, Session};
 
 fn centered(width: u16, height: u16, area: Rect) -> Rect {
     let width = width.min(area.width);
@@ -19,6 +19,45 @@ fn centered(width: u16, height: u16, area: Rect) -> Rect {
         width,
         height,
     }
+}
+
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// What is on screen while ssh is off resolving, connecting and agreeing on
+/// keys. It sits over the host it is connecting to rather than taking the pane,
+/// so there is still something to read while the wait goes on. The mark is
+/// worked out from the clock, so nothing has to be stepped along to turn it.
+pub fn draw_connecting(frame: &mut Frame, app: &AppService, session: &Session, body: Rect) {
+    let t = &app.theme;
+
+    let target = app
+        .host_named(&session.alias)
+        .map(|host| host.display_host().to_string())
+        .unwrap_or_else(|| session.alias.clone());
+
+    let said = format!("Connecting to {}…", target);
+    let area = centered(said.chars().count() as u16 + 12, 5, body);
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(t.accent())
+        .title(Span::styled(format!(" {} ", session.alias), t.title()))
+        .title_alignment(Alignment::Center)
+        .padding(Padding::new(2, 2, 1, 0))
+        .style(t.base());
+
+    let turn = (session.waiting_for().as_millis() / 100) as usize;
+    let line = Line::from(vec![
+        Span::styled(SPINNER[turn % SPINNER.len()], Style::default().fg(t.warning.to_color())),
+        Span::styled(format!(" {}", said), t.muted()),
+    ]);
+
+    frame.render_widget(
+        Paragraph::new(line).alignment(Alignment::Center).block(block),
+        area,
+    );
 }
 
 /// Everything the form draws, worked out up front so a click can be matched

@@ -1,13 +1,19 @@
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
 
 /// What the exit holds while the process is still there. No real exit code
 /// looks like this, so it doubles as "it has not said yet".
 const UNFINISHED: i32 = i32::MIN;
+
+/// How long a session counts as connecting even after the far end has
+/// answered. A host on the same network answers before the eye can follow it,
+/// and a screen that flickers past reads as a fault rather than as a
+/// connection being made.
+const SETTLE: Duration = Duration::from_secs(2);
 
 pub struct Session {
     pub alias: String,
@@ -124,8 +130,14 @@ impl Session {
         self.spoken.load(Ordering::SeqCst)
     }
 
-    pub fn waiting_for(&self) -> std::time::Duration {
+    pub fn waiting_for(&self) -> Duration {
         self.opened.elapsed()
+    }
+
+    /// Whether the session is still being made rather than being used, which is
+    /// what is worth saying so out loud for.
+    pub fn is_connecting(&self) -> bool {
+        self.is_running() && (!self.has_spoken() || self.waiting_for() < SETTLE)
     }
 
     pub fn exit_code(&self) -> Option<i32> {

@@ -81,7 +81,9 @@ pub fn render(frame: &mut Frame, app: &AppService) {
         panels::draw_sidebar_edge(frame, app, sidebar);
     }
 
-    match app.active_session() {
+    // INFO: a session being made has nothing to paint yet, so the host it is
+    // being made to stays on screen and the waiting is said over the top
+    match app.active_session().filter(|session| !session.is_connecting()) {
         Some(session) => session::draw(frame, app, session, frames.main),
         None => panels::draw_detail_panel(frame, app, frames.main),
     }
@@ -89,6 +91,12 @@ pub fn render(frame: &mut Frame, app: &AppService) {
     // INFO: toasts belong to the screen, not to the panels, so they hang in
     // the very corner rather than starting where the details do
     toasts::draw(frame, app, area);
+
+    // INFO: this one belongs to the pane rather than to the screen, so it is
+    // centred on the host it is connecting to and leaves the list alone
+    if let Some(session) = app.active_session().filter(|session| session.is_connecting()) {
+        popups::draw_connecting(frame, app, session, frames.main);
+    }
 
     let body = frames.body;
     match &app.mode {
@@ -453,7 +461,17 @@ mod tests {
         let waiting = screenshot::draw(&app, 100, 20);
         assert!(
             waiting.contains("Connecting to server-01.example.com…"),
-            "the pane should say what it is waiting for:\n{}",
+            "the wait should say what it is waiting for:\n{}",
+            waiting
+        );
+        assert!(
+            waiting.contains("› server-01"),
+            "the host being connected to should still be readable:\n{}",
+            waiting
+        );
+        assert!(
+            waiting.contains("Hosts 3"),
+            "the list should be left alone:\n{}",
             waiting
         );
 
@@ -1156,6 +1174,8 @@ mod tests {
     }
 
 }
+
+
 
 
 
