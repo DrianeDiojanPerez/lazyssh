@@ -41,9 +41,12 @@ pub fn handle_next_event(
     theme_repo: &dyn ThemeRepository,
     clicks: &mut Clicks,
 ) -> std::io::Result<()> {
-    if (app.has_toasts() || app.has_live_session() || app.probes.is_working())
-        && !event::poll(FRAME)?
-    {
+    let moving = app.has_toasts()
+        || app.has_live_session()
+        || app.is_launching()
+        || app.probes.is_working();
+
+    if moving && !event::poll(FRAME)? {
         return Ok(());
     }
 
