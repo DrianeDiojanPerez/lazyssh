@@ -52,7 +52,4 @@ impl SshHost {
         !self.identity_file.is_empty()
     }
 
-    pub fn has_extra_options(&self) -> bool {
-        !self.extra_options.is_empty()
-    }
 }
