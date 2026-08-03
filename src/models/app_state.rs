@@ -41,11 +41,19 @@ pub enum FormField {
     Port,
     User,
     IdentityFile,
+    Options,
 }
 
 impl FormField {
     pub fn all() -> Vec<Self> {
-        vec![Self::Alias, Self::HostName, Self::Port, Self::User, Self::IdentityFile]
+        vec![
+            Self::Alias,
+            Self::HostName,
+            Self::Port,
+            Self::User,
+            Self::IdentityFile,
+            Self::Options,
+        ]
     }
 
     pub fn next(&self) -> Self {
@@ -54,17 +62,19 @@ impl FormField {
             Self::HostName => Self::Port,
             Self::Port => Self::User,
             Self::User => Self::IdentityFile,
-            Self::IdentityFile => Self::Alias,
+            Self::IdentityFile => Self::Options,
+            Self::Options => Self::Alias,
         }
     }
 
     pub fn previous(&self) -> Self {
         match self {
-            Self::Alias => Self::IdentityFile,
+            Self::Alias => Self::Options,
             Self::HostName => Self::Alias,
             Self::Port => Self::HostName,
             Self::User => Self::Port,
             Self::IdentityFile => Self::User,
+            Self::Options => Self::IdentityFile,
         }
     }
 
@@ -75,6 +85,7 @@ impl FormField {
             Self::Port => "Port",
             Self::User => "User",
             Self::IdentityFile => "IdentityFile",
+            Self::Options => "Options",
         }
     }
 
@@ -85,6 +96,7 @@ impl FormField {
             Self::Port => "default 22",
             Self::User => "login username",
             Self::IdentityFile => "path to key (optional)",
+            Self::Options => "Name Value; Name Value",
         }
     }
 
