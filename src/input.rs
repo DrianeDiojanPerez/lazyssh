@@ -193,8 +193,12 @@ fn on_mouse(
 
         // INFO: the pointer resting on a card is enough to say which host is
         // wanted, so the details follow it around. Nothing is opened until it
-        // is actually clicked
-        (Mode::Normal | Mode::Search, MouseEventKind::Moved) if !app.is_launching() => {
+        // is actually clicked, and an open session keeps hold of the app until
+        // the list is clicked into: the console is the window being worked in,
+        // and the pointer crossing it should not drag everything away
+        (Mode::Normal | Mode::Search, MouseEventKind::Moved)
+            if !app.is_launching() && !app.is_session_focused() =>
+        {
             if let Some(index) = panels::host_at(app, frames.list, column, row) {
                 app.select(index);
             }
