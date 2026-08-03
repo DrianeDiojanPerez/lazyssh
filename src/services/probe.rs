@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use crate::models::{Reachability, SshHost};
 
-/// How long a host is given to answer before it counts as unreachable.
 const TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How many hosts are tried at once, so a long config does not open a thread
@@ -30,8 +29,6 @@ impl Probes {
             .unwrap_or(Reachability::Unknown)
     }
 
-    /// True while any host is still being tried, which is what keeps the
-    /// interface redrawing until the last dot has settled.
     pub fn is_working(&self) -> bool {
         self.in_flight.load(Ordering::Relaxed) > 0
     }

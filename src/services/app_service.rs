@@ -30,20 +30,12 @@ pub struct AppService {
     pub search_query: String,
     pub visible_indices: Vec<usize>,
     pub show_command: bool,
-    // INFO: the keys on disk are read once at startup and offered as
-    // completions whenever the IdentityFile field has focus
     identity_files: Vec<String>,
     pub suggestion_cursor: Option<usize>,
     pub toasts: Vec<Toast>,
-    // INFO: a rejected form stays open, so its complaint belongs inside the
-    // form rather than in a toast that flies away
     pub form_error: Option<String>,
     pub pending_action: Action,
 
-    // INFO: connections stay open in tabs, so the app is the terminal these
-    // sessions live in rather than something that steps aside for them
-    // INFO: who answered on their ssh port, kept beside the hosts so a card
-    // can say at a glance whether it is worth pressing Enter on
     pub probes: Probes,
     pub sessions: Vec<Session>,
     pub active_tab: Option<usize>,
@@ -143,8 +135,6 @@ impl AppService {
         self.hosts.get(index)
     }
 
-    // INFO: Navigation
-
     pub fn move_cursor_up(&mut self) {
         if self.cursor > 0 {
             self.cursor -= 1;
@@ -158,8 +148,6 @@ impl AppService {
         }
     }
 
-    /// Puts the cursor on a host by position in the visible list, which is what
-    /// a click on a card asks for.
     pub fn select(&mut self, index: usize) {
         if index < self.visible_hosts().len() {
             self.cursor = index;
@@ -176,8 +164,6 @@ impl AppService {
             self.cursor = count - 1;
         }
     }
-
-    // INFO: Search
 
     pub fn enter_search(&mut self) {
         self.search_query.clear();
@@ -235,8 +221,6 @@ impl AppService {
             self.cursor = count.saturating_sub(1);
         }
     }
-
-    // ─── CRUD via Repository ─────────────────────────────────────────────
 
     pub fn begin_add(&mut self) {
         self.suggestion_cursor = None;
@@ -371,7 +355,6 @@ impl AppService {
     }
 
     pub fn cancel_mode(&mut self) {
-        // INFO: leaving the picker undoes the preview it was showing
         if self.mode == Mode::SelectTheme {
             self.restore_theme();
         }
@@ -390,10 +373,6 @@ impl AppService {
         }
     }
 
-    // ─── SSH Execution ───────────────────────────────────────────────────
-
-    /// Starts a connection the way the settings say to: in a tab, in the whole
-    /// terminal, or by asking which of the two this time.
     pub fn request_connection(&mut self, rows: u16, columns: u16) {
         if self.selected_host().is_none() {
             return;
@@ -401,7 +380,6 @@ impl AppService {
 
         match self.theme_preference.launch_style {
             LaunchStyle::Ask => {
-                // the quicker answer is the one under the cursor to begin with
                 self.launch_cursor = 0;
                 self.mode = Mode::ChooseLaunch;
             }
@@ -418,7 +396,6 @@ impl AppService {
         self.launch_cursor = 1;
     }
 
-    /// Hands the whole terminal to ssh, the way lazyssh used to.
     pub fn launch_full_screen(&mut self) {
         if let Some(host) = self.selected_host() {
             self.pending_action = Action::LaunchSsh(host.as_ssh_args());
@@ -442,8 +419,6 @@ impl AppService {
         self.settings_cursor = (self.settings_cursor + 1).min(Setting::all().len() - 1);
     }
 
-    /// Acts on the settings row under the cursor. The panel stays open so a
-    /// few things can be changed in one visit.
     pub fn apply_settings_choice(&mut self, theme_repo: &dyn ThemeRepository) {
         match Setting::all().get(self.settings_cursor) {
             Some(Setting::Launch(style)) => self.choose_launch_style(*style, theme_repo),
@@ -470,8 +445,6 @@ impl AppService {
         self.theme_preference.launch_style
     }
 
-    /// Opens the selected host in a tab of its own and hands it the keyboard.
-    /// A host already open is brought forward instead of dialled twice.
     pub fn open_session(&mut self, rows: u16, columns: u16) {
         let Some(host) = self.selected_host() else {
             return;
@@ -563,8 +536,6 @@ impl AppService {
         self.sessions.iter().any(|session| session.is_running())
     }
 
-    /// Closing the sidebar hands the keyboard to the session, and opening it
-    /// takes it back, so one key does the whole move.
     pub fn toggle_sidebar(&mut self) {
         self.sidebar_open = !self.sidebar_open;
         self.focus = if self.sidebar_open || self.active_tab.is_none() {
@@ -587,7 +558,6 @@ impl AppService {
         }
     }
 
-    /// Walks the active session back through its scrollback, for the wheel.
     pub fn scroll_session_back(&mut self, lines: i32) {
         let Some(session) = self.active_session() else {
             return;
@@ -607,12 +577,6 @@ impl AppService {
         self.mode == Mode::Normal && self.focus == Focus::Session && self.active_tab.is_some()
     }
 
-    // ─── Form Editing ────────────────────────────────────────────────────
-
-    // ─── IdentityFile completion ─────────────────────────────────────────
-
-    /// The keys worth offering for what has been typed so far. Everything is
-    /// on the table until the field says otherwise.
     pub fn identity_matches(&self) -> Vec<&str> {
         let typed = self.form_draft.identity_file.trim().to_lowercase();
 
@@ -667,7 +631,6 @@ impl AppService {
         true
     }
 
-    /// Takes the key a click landed on, wherever the highlight happened to be.
     pub fn pick_suggestion(&mut self, index: usize) {
         self.suggestion_cursor = Some(index);
         self.accept_suggestion();
@@ -677,7 +640,6 @@ impl AppService {
         self.suggestion_cursor.take().is_some()
     }
 
-    /// Puts the cursor in a field, for a click straight onto one.
     pub fn focus_field(&mut self, field: FormField) {
         self.suggestion_cursor = None;
         self.form_field = field;
@@ -745,8 +707,6 @@ impl AppService {
         }
     }
 
-    // ─── Theme ───────────────────────────────────────────────────────────
-
     pub fn open_theme_selector(&mut self) {
         self.theme_cursor = self.theme_preference.theme_index;
         self.mode = Mode::SelectTheme;
@@ -766,23 +726,18 @@ impl AppService {
         }
     }
 
-    /// The theme under the cursor is worn straight away, so the whole screen
-    /// shows what it would look like before anything is committed to.
     fn preview_theme(&mut self) {
         if let Some(theme) = self.theme_at(self.theme_cursor) {
             self.theme = theme;
         }
     }
 
-    /// The first theme in the catalog is the one that lets the terminal show
-    /// through, so it is always transparent whatever the preference says.
     fn theme_at(&self, index: usize) -> Option<Theme> {
         let mut theme = self.available_themes.get(index)?.clone();
         theme.transparent = index == 0 || self.theme_preference.transparent;
         Some(theme)
     }
 
-    /// Puts back the theme that was in use before the picker was opened.
     fn restore_theme(&mut self) {
         if let Some(theme) = self.theme_at(self.theme_preference.theme_index) {
             self.theme = theme;
@@ -842,8 +797,6 @@ impl AppService {
         self.toast(Toast::success(format!("Transparency: {}", label)));
     }
 
-    // ─── Misc ────────────────────────────────────────────────────────────
-
     pub fn toggle_command_preview(&mut self) {
         self.show_command = !self.show_command;
     }
@@ -877,8 +830,6 @@ impl AppService {
         self.toasts.push(toast);
     }
 
-    /// Ages every toast by the time the last frame took and drops the ones
-    /// that have finished, which is what makes them animate.
     pub fn advance_toasts(&mut self, delta: Duration) {
         for toast in &mut self.toasts {
             toast.advance(delta);
