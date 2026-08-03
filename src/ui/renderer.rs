@@ -173,7 +173,7 @@ mod tests {
         (list.y..list.bottom())
             .find(|row| {
                 sidebar_row(screen, list, *row)
-                    .trim_start_matches(['▎', ' '])
+                    .trim_start_matches(['│', ' '])
                     .starts_with(alias)
             })
             .unwrap_or_else(|| panic!("'{}' has no card:\n{}", alias, screen))
@@ -184,7 +184,7 @@ mod tests {
         (list.y..list.bottom())
             .filter_map(|row| {
                 let text = sidebar_row(screen, list, row);
-                let text = text.trim_start_matches(['▎', ' ']);
+                let text = text.trim_start_matches(['│', ' ']);
                 let number = text.strip_prefix("server-")?.get(..2)?.parse::<usize>().ok()?;
                 (!text.contains('@')).then_some((row, number - 1))
             })
@@ -742,31 +742,37 @@ mod tests {
     }
 
     #[test]
-    fn the_selected_card_is_the_one_with_the_bar_down_its_side() {
+    fn the_selected_card_is_the_one_in_a_box() {
         let (mut app, _repo) = app_with(hosts(3));
         app.move_cursor_down();
 
         let screen = screenshot::draw(&app, 80, 24);
         let buffer = screenshot::buffer(&app, 80, 24);
         let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
-        let bar_of = |alias: &str| sidebar_row(&screen, list, card_row(&screen, list, alias));
-
-        assert!(
-            bar_of("server-02").contains('▎'),
-            "the selected card should be marked:\n{}",
-            screen
-        );
-        assert!(
-            !bar_of("server-01").contains('▎'),
-            "only the selected card gets the bar:\n{}",
-            screen
-        );
-
         let row = card_row(&screen, list, "server-02");
+
+        assert!(
+            sidebar_row(&screen, list, row - 1).contains("╭──"),
+            "the selected card has no top edge:\n{}",
+            screen
+        );
+        assert!(
+            sidebar_row(&screen, list, row + 2).contains("╰──"),
+            "the selected card has no bottom edge:\n{}",
+            screen
+        );
+
+        let unselected = card_row(&screen, list, "server-01");
+        assert!(
+            sidebar_row(&screen, list, unselected - 1).trim().is_empty(),
+            "only the selected card gets a box:\n{}",
+            screen
+        );
+
         assert_eq!(
-            buffer.get(list.x + 1, row).style().fg,
+            buffer.get(list.x + 1, row - 1).style().fg,
             Some(app.theme.accent.to_color()),
-            "the bar should be drawn in the accent colour:\n{}",
+            "the box should be drawn in the accent colour:\n{}",
             screen
         );
         assert_eq!(
@@ -805,20 +811,20 @@ mod tests {
     }
 
     #[test]
-    fn a_host_is_drawn_flat_on_two_lines() {
+    fn an_unselected_host_is_drawn_flat_on_two_lines() {
         let (app, _repo) = app_with(hosts(3));
 
         let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
         let screen = screenshot::draw(&app, 80, 24);
-        let top = card_row(&screen, list, "server-01");
+        let top = card_row(&screen, list, "server-02");
 
         assert!(
-            !sidebar_row(&screen, list, top).contains('╭'),
-            "a card should not be boxed any more:\n{}",
+            !sidebar_row(&screen, list, top).contains('│'),
+            "an unselected card should have nothing drawn around it:\n{}",
             screen
         );
         assert!(
-            sidebar_row(&screen, list, top + 1).contains("dperez@server-01.example.com"),
+            sidebar_row(&screen, list, top + 1).contains("dperez@server-02.example.com"),
             "the card is missing its detail line:\n{}",
             screen
         );
@@ -1040,6 +1046,7 @@ mod tests {
     }
 
 }
+
 
 
 

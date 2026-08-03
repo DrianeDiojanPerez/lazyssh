@@ -117,9 +117,9 @@ pub struct Cards {
 pub fn cards(app: &AppService, area: Rect) -> Cards {
     let inner = list_block(app).inner(area);
 
-    // the two lines a host is written on, and a blank one holding it apart
-    // from the next
-    let height = 3;
+    // the two lines a host is written on, and the two the box around the
+    // selected one needs
+    let height = 4;
     let visible = (inner.height / height).max(1) as usize;
 
     Cards {
@@ -217,9 +217,10 @@ fn key_name(host: &SshHost) -> &str {
     host.identity_file.rsplit('/').next().unwrap_or("")
 }
 
-/// A host, written flat on two lines. Nothing is drawn around it, so the one
-/// under the cursor is marked by the bar down its side and the surface it sits
-/// on rather than by a shape the others do not have.
+/// A host, written on two lines. The one under the cursor is boxed and sits on
+/// its own surface; the rest are flat. Every card is the same height either
+/// way, so the rows the box takes are the air the others leave empty and
+/// nothing shifts as the cursor moves.
 fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -> Vec<Line<'a>> {
     let t = &app.theme;
 
@@ -227,13 +228,14 @@ fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -
         true => Style::default().bg(t.selected_bg.to_color()),
         false => Style::default(),
     };
-    let bar = match is_selected {
-        true => Span::styled("▎ ", ink(&t.accent)),
-        false => Span::raw("  "),
+    let edge = ink(&t.accent);
+    let (left, right) = match is_selected {
+        true => (Span::styled("│ ", edge), Span::styled(" │", edge)),
+        false => (Span::raw("  "), Span::raw("  ")),
     };
 
-    // the bar on the left and a column of air on the right
-    let room = width.saturating_sub(3);
+    // the sides of the box, whether they are drawn or left as air
+    let room = width.saturating_sub(4);
 
     let target = if host.user.is_empty() {
         host.display_host().to_string()
@@ -259,10 +261,19 @@ fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -
     head.push(Span::styled(lamp, lamp_style));
 
     vec![
-        row_line(bar, room, &host.alias, ink(&t.fg).add_modifier(Modifier::BOLD), head)
-            .style(surface),
+        rule(is_selected, "╭", "╮", edge, width),
         row_line(
-            Span::raw("  "),
+            left.clone(),
+            right.clone(),
+            room,
+            &host.alias,
+            ink(&t.fg).add_modifier(Modifier::BOLD),
+            head,
+        )
+        .style(surface),
+        row_line(
+            left,
+            right,
             room,
             &target,
             ink(if is_selected { &t.accent } else { &t.muted }),
@@ -272,15 +283,28 @@ fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -
                 .collect(),
         )
         .style(surface),
-        Line::from(""),
+        rule(is_selected, "╰", "╯", edge, width),
     ]
 }
 
-/// A line of a card: the bar down its side, something on the left, and
-/// something optional pushed hard right. The left gives way first when the two
-/// of them will not fit.
+/// One of the two edges of the box, or the air it is drawn in.
+fn rule<'a>(is_selected: bool, start: &str, end: &str, edge: Style, width: usize) -> Line<'a> {
+    if !is_selected {
+        return Line::from("");
+    }
+
+    Line::from(Span::styled(
+        format!("{}{}{}", start, "─".repeat(width.saturating_sub(2)), end),
+        edge,
+    ))
+}
+
+/// A line of a card: the sides of the box, something on the left, and something
+/// optional pushed hard right. The left gives way first when the two of them
+/// will not fit.
 fn row_line<'a>(
-    bar: Span<'a>,
+    left: Span<'a>,
+    right: Span<'a>,
     room: usize,
     text: &str,
     style: Style,
@@ -294,12 +318,12 @@ fn row_line<'a>(
     let used = text.chars().count() + taken.saturating_sub(1);
 
     let mut spans = vec![
-        bar,
+        left,
         Span::styled(text, style),
         Span::raw(" ".repeat(room.saturating_sub(used))),
     ];
     spans.extend(meta);
-    spans.push(Span::raw(" "));
+    spans.push(right);
 
     Line::from(spans)
 }
