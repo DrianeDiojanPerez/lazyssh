@@ -21,20 +21,32 @@ use models::Action;
 use repositories::{FileSshRepository, FileThemeRepository};
 use services::AppService;
 
+/// The installer that put lazyssh here. Updating is that same script run
+/// again: it already knows the platform, what the releases are called and
+/// where the binary belongs, so none of that is worth keeping twice.
+#[cfg(unix)]
+const INSTALLER: &str =
+    "https://raw.githubusercontent.com/DrianeDiojanPerez/lazyssh/refs/heads/master/install.sh";
+
 pub fn main() -> io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
-    if args.iter().any(|a| a == "--version" || a == "-V") {
+    if asked_for(&args, "--version", "-V") {
         println!("v{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
 
-    if args.iter().any(|a| a == "--help" || a == "-h") {
+    if asked_for(&args, "--update", "-u") {
+        return update();
+    }
+
+    if asked_for(&args, "--help", "-h") {
         println!("lazyssh {}", env!("CARGO_PKG_VERSION"));
         println!("A TUI SSH manager that reads/edits ~/.ssh/config directly\n");
         println!("Usage: lazyssh [OPTIONS]\n");
         println!("Options:");
         println!("  -V, --version    Print version");
+        println!("  -u, --update     Update to the latest release");
         println!("  -h, --help       Print this help");
         return Ok(());
     }
@@ -55,6 +67,57 @@ pub fn main() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn asked_for(args: &[String], long: &str, short: &str) -> bool {
+    args.iter().any(|arg| arg == long || arg == short)
+}
+
+/// Fetches the installer and runs it, which is all an update is. It is put in
+/// a file rather than piped into a shell so that it keeps the terminal: the
+/// sudo prompt it may need still has somewhere to ask.
+#[cfg(unix)]
+fn update() -> io::Result<()> {
+    println!("lazyssh v{}, looking for a newer one\n", env!("CARGO_PKG_VERSION"));
+
+    let script = std::env::temp_dir().join("lazyssh-install.sh");
+
+    let fetched = Command::new("curl")
+        .args(["-fsSL", INSTALLER, "-o"])
+        .arg(&script)
+        .status();
+
+    match fetched {
+        Ok(status) if status.success() => {}
+        Ok(_) => give_up("the installer could not be downloaded"),
+        Err(e) => give_up(&format!("curl is needed to update: {}", e)),
+    }
+
+    let ran = Command::new("bash").arg(&script).status();
+    let _ = std::fs::remove_file(&script);
+
+    match ran {
+        Ok(status) if status.success() => Ok(()),
+        Ok(_) => give_up("the installer did not finish"),
+        Err(e) => give_up(&format!("bash is needed to update: {}", e)),
+    }
+}
+
+/// There is no installer to run on Windows, so this says where to go instead
+/// of leaving the flag looking broken.
+#[cfg(not(unix))]
+fn update() -> io::Result<()> {
+    println!("lazyssh v{}\n", env!("CARGO_PKG_VERSION"));
+    println!("Updating in place is not supported here yet. The latest build is at");
+    println!("https://github.com/DrianeDiojanPerez/lazyssh/releases/latest");
+    Ok(())
+}
+
+#[cfg(unix)]
+fn give_up(reason: &str) -> ! {
+    eprintln!("\nUpdate failed: {}", reason);
+    eprintln!("The latest build is at https://github.com/DrianeDiojanPerez/lazyssh/releases/latest");
+    std::process::exit(1);
 }
 
 /// The old way of connecting: the interface steps aside, ssh gets the terminal
@@ -143,4 +206,26 @@ fn run_tui(
     terminal.show_cursor()?;
 
     Ok(action)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::asked_for;
+
+    fn args(given: &[&str]) -> Vec<String> {
+        given.iter().map(|arg| arg.to_string()).collect()
+    }
+
+    #[test]
+    fn a_flag_is_taken_by_either_of_its_names() {
+        assert!(asked_for(&args(&["lazyssh", "--update"]), "--update", "-u"));
+        assert!(asked_for(&args(&["lazyssh", "-u"]), "--update", "-u"));
+    }
+
+    #[test]
+    fn nothing_else_counts_as_that_flag() {
+        assert!(!asked_for(&args(&["lazyssh"]), "--update", "-u"));
+        assert!(!asked_for(&args(&["lazyssh", "--updates"]), "--update", "-u"));
+        assert!(!asked_for(&args(&["lazyssh", "-V"]), "--update", "-u"));
+    }
 }
