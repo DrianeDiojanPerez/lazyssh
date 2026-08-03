@@ -466,20 +466,47 @@ mod tests {
         );
     }
 
+    /// A session that answers at once and then stays open, which is the shape
+    /// that would otherwise flicker past.
+    fn quick_session(app: &mut crate::services::AppService) {
+        app.sessions.push(
+            crate::services::Session::spawn(
+                "server-01",
+                "sh",
+                &["-c".into(), "echo ready; sleep 5".into()],
+                20,
+                40,
+            )
+            .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+    }
+
+    #[test]
+    fn the_wait_is_held_long_enough_to_be_seen() {
+        let (mut app, _repo) = app_with(hosts(3));
+        quick_session(&mut app);
+
+        settle(|| app.sessions[0].has_spoken());
+
+        let screen = screenshot::draw(&app, 100, 20);
+        assert!(
+            screen.contains("Connecting to"),
+            "the wait should hold even once the far end has answered:\n{}",
+            screen
+        );
+    }
+
     #[test]
     fn the_wait_gives_way_to_whatever_the_session_prints() {
         let (mut app, _repo) = app_with(hosts(3));
-        app.sessions.push(
-            crate::services::Session::spawn("server-01", "echo", &["ready".into()], 20, 40)
-                .expect("the pty should have started"),
-        );
-        app.select_tab(0);
+        quick_session(&mut app);
 
         settle(|| screenshot::draw(&app, 100, 20).contains("ready"));
 
         assert!(
             !screenshot::draw(&app, 100, 20).contains("Connecting to"),
-            "the wait should be over once there is something to show"
+            "the wait should be over once it has been held its time"
         );
     }
 

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use ratatui::{
     layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
@@ -30,7 +32,7 @@ pub fn draw(frame: &mut Frame, app: &AppService, session: &Session, area: Rect) 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    if session.is_running() && !session.has_spoken() {
+    if session.is_running() && (!session.has_spoken() || session.waiting_for() < SETTLE) {
         draw_waiting(frame, app, session, inner);
         return;
     }
@@ -78,6 +80,12 @@ pub fn draw(frame: &mut Frame, app: &AppService, session: &Session, area: Rect) 
 }
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// How long the wait is held once the tab opens, whether or not the far end
+/// has already answered. A host on the same network answers before the eye can
+/// follow it, and a screen that flickers past reads as a fault rather than as
+/// a connection being made.
+const SETTLE: Duration = Duration::from_secs(2);
 
 /// A turning mark while ssh is off resolving, connecting and agreeing on keys,
 /// which is time the pane would otherwise sit empty and look broken. It is
