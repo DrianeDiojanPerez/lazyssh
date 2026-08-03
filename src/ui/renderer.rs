@@ -78,9 +78,10 @@ pub fn render(frame: &mut Frame, app: &AppService) {
     let frames = frames(app, area);
 
     tabs::draw(frame, app, frames.tabs);
-    if frames.sidebar.is_some() {
+    if let Some(sidebar) = frames.sidebar {
         panels::draw_search_bar(frame, app, frames.search);
         panels::draw_host_list(frame, app, frames.list);
+        panels::draw_sidebar_edge(frame, app, sidebar);
     }
 
     match app.active_session() {
@@ -161,15 +162,37 @@ mod tests {
         assert!(!screenshot::draw(&app, 80, 18).contains("Added"));
     }
 
-    /// The alias line of each card, as drawn: "│ server-07    :22 │".
-    fn alias_rows(screen: &str) -> Vec<(u16, usize)> {
+    /// The part of a row that belongs to the sidebar, so a search for an alias
+    /// or a lamp cannot wander into the pane beside it.
+    fn sidebar_row(screen: &str, list: Rect, row: u16) -> String {
         screen
             .lines()
-            .enumerate()
-            .filter_map(|(row, line)| {
-                let text = line.trim_start_matches(['│', '┃', ' ']);
+            .nth(row as usize)
+            .unwrap_or_default()
+            .chars()
+            .take(list.right() as usize)
+            .collect()
+    }
+
+    /// The row a host is written on, which is the first of the two it takes.
+    fn card_row(screen: &str, list: Rect, alias: &str) -> u16 {
+        (list.y..list.bottom())
+            .find(|row| {
+                sidebar_row(screen, list, *row)
+                    .trim_start_matches(['▎', ' '])
+                    .starts_with(alias)
+            })
+            .unwrap_or_else(|| panic!("'{}' has no card:\n{}", alias, screen))
+    }
+
+    /// The alias line of each card, as drawn: "  server-07    :22  ●".
+    fn alias_rows(screen: &str, list: Rect) -> Vec<(u16, usize)> {
+        (list.y..list.bottom())
+            .filter_map(|row| {
+                let text = sidebar_row(screen, list, row);
+                let text = text.trim_start_matches(['▎', ' ']);
                 let number = text.strip_prefix("server-")?.get(..2)?.parse::<usize>().ok()?;
-                (!text.contains('@')).then_some((row as u16, number - 1))
+                (!text.contains('@')).then_some((row, number - 1))
             })
             .collect()
     }
@@ -386,23 +409,24 @@ mod tests {
 
         settle(|| !app.probes.is_working());
 
+        let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
         let screen = screenshot::draw(&app, 80, 24);
         let buffer = screenshot::buffer(&app, 80, 24);
         let lamp_on = |alias: &str| {
-            let row = row_of(&screen, alias);
-            let line = screen.lines().nth(row as usize).unwrap();
+            let row = card_row(&screen, list, alias);
+            let line = sidebar_row(&screen, list, row);
             let column = line.rfind('●').expect("the card has no lamp");
             buffer.get(line[..column].chars().count() as u16, row).style().fg
         };
 
         assert_eq!(
-            lamp_on("│ localbox"),
+            lamp_on("localbox"),
             Some(app.theme.success.to_color()),
             "a host that answered should be lit green:\n{}",
             screen
         );
         assert_eq!(
-            lamp_on("│ dead-host"),
+            lamp_on("dead-host"),
             Some(app.theme.error.to_color()),
             "a host that did not answer should be lit red:\n{}",
             screen
@@ -724,7 +748,7 @@ mod tests {
 
         let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
         let screen = screenshot::draw(&app, 80, 24);
-        let drawn = alias_rows(&screen);
+        let drawn = alias_rows(&screen, list);
         assert!(drawn.len() > 2, "expected a panel full of cards:\n{}", screen);
 
         for (row, index) in drawn {
@@ -758,69 +782,114 @@ mod tests {
     }
 
     #[test]
-    fn the_selected_card_is_the_one_in_the_accent_colour() {
+    fn the_selected_card_is_the_one_with_the_bar_down_its_side() {
         let (mut app, _repo) = app_with(hosts(3));
         app.move_cursor_down();
 
         let screen = screenshot::draw(&app, 80, 24);
         let buffer = screenshot::buffer(&app, 80, 24);
         let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
+        let bar_of = |alias: &str| sidebar_row(&screen, list, card_row(&screen, list, alias));
 
-        let edge_of = |alias: &str| {
-            let row = row_of(&screen, alias) - 1;
-            buffer.get(list.x + 2, row).style().fg
-        };
+        assert!(
+            bar_of("server-02").contains('▎'),
+            "the selected card should be marked:\n{}",
+            screen
+        );
+        assert!(
+            !bar_of("server-01").contains('▎'),
+            "only the selected card gets the bar:\n{}",
+            screen
+        );
 
+        let row = card_row(&screen, list, "server-02");
         assert_eq!(
-            edge_of("│ server-02"),
+            buffer.get(list.x + 1, row).style().fg,
             Some(app.theme.accent.to_color()),
-            "the selected card should be drawn in the accent colour:\n{}",
+            "the bar should be drawn in the accent colour:\n{}",
             screen
         );
         assert_eq!(
-            edge_of("│ server-01"),
-            Some(app.theme.border.to_color()),
-            "an unselected card should keep the plain border:\n{}",
+            buffer.get(list.x + 1, row).style().bg,
+            Some(app.theme.selected_bg.to_color()),
+            "the selected card should sit on its own surface:\n{}",
             screen
         );
     }
 
     #[test]
-    fn a_host_is_drawn_as_a_boxed_card() {
+    fn the_host_list_is_headed_by_a_rule_rather_than_boxed() {
         let (app, _repo) = app_with(hosts(3));
 
+        let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
         let screen = screenshot::draw(&app, 80, 24);
-        let lines: Vec<&str> = screen.lines().collect();
-        let top = lines
-            .iter()
-            .position(|line| line.contains("│ server-01"))
-            .unwrap_or_else(|| panic!("the card is missing:\n{}", screen));
+        let buffer = screenshot::buffer(&app, 80, 24);
 
-        assert!(lines[top - 1].contains("╭──"), "the card has no top edge:\n{}", screen);
+        assert!(!screen.contains("╭ Hosts"), "the panel should be gone:\n{}", screen);
+
+        let header = (list.y..list.bottom())
+            .find(|row| sidebar_row(&screen, list, *row).contains("Hosts 3"))
+            .unwrap_or_else(|| panic!("the header is missing:\n{}", screen));
+
         assert!(
-            lines[top + 1].contains("dperez@server-01.example.com"),
+            sidebar_row(&screen, list, header).contains("───"),
+            "the header should run out to the edge:\n{}",
+            screen
+        );
+        assert_eq!(
+            buffer.get(list.right(), list.y).symbol(),
+            "│",
+            "the sidebar has lost the line down its side:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn a_host_is_drawn_flat_on_two_lines() {
+        let (app, _repo) = app_with(hosts(3));
+
+        let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
+        let screen = screenshot::draw(&app, 80, 24);
+        let top = card_row(&screen, list, "server-01");
+
+        assert!(
+            !sidebar_row(&screen, list, top).contains('╭'),
+            "a card should not be boxed any more:\n{}",
+            screen
+        );
+        assert!(
+            sidebar_row(&screen, list, top + 1).contains("dperez@server-01.example.com"),
             "the card is missing its detail line:\n{}",
             screen
         );
-        assert!(lines[top + 2].contains("╰──"), "the card has no bottom edge:\n{}", screen);
+        assert!(
+            sidebar_row(&screen, list, top + 2).trim().is_empty(),
+            "the cards should have air between them:\n{}",
+            screen
+        );
     }
 
     #[test]
     fn a_custom_port_and_a_key_sit_beside_the_host() {
-        let mut list = hosts(2);
-        list[0].port = 2222;
-        list[0].identity_file = "~/.ssh/id_ed25519".into();
+        let mut hosts = hosts(2);
+        hosts[0].port = 2222;
+        hosts[0].identity_file = "~/.ssh/id_ed25519".into();
 
-        let (app, _repo) = app_with(list);
+        let (app, _repo) = app_with(hosts);
+        let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
         let screen = screenshot::draw(&app, 80, 24);
-        let lines: Vec<&str> = screen.lines().collect();
-        let top = lines
-            .iter()
-            .position(|line| line.contains("│ server-01"))
-            .unwrap_or_else(|| panic!("the card is missing:\n{}", screen));
+        let top = card_row(&screen, list, "server-01");
 
-        assert!(lines[top].contains(":2222"), "the port badge is missing:\n{}", screen);
-        assert!(lines[top + 1].contains("id_ed25519"), "the key is missing:\n{}", screen);
+        assert!(
+            sidebar_row(&screen, list, top).contains(":2222"),
+            "the port badge is missing:\n{}",
+            screen
+        );
+        assert!(
+            sidebar_row(&screen, list, top + 1).contains("id_ed25519"),
+            "the key is missing:\n{}",
+            screen
+        );
     }
 
     #[test]
@@ -838,9 +907,15 @@ mod tests {
         let (mut app, _repo) = app_with(hosts(40));
         app.jump_to_bottom();
 
+        let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
         let screen = screenshot::draw(&app, 80, 24);
 
-        assert!(screen.contains("│ server-40"), "selection scrolled out of view:\n{}", screen);
+        assert!(
+            (list.y..list.bottom())
+                .any(|row| sidebar_row(&screen, list, row).contains("server-40")),
+            "selection scrolled out of view:\n{}",
+            screen
+        );
     }
 
     #[test]
@@ -1013,6 +1088,7 @@ mod tests {
         assert!(screenshot::draw(&app, 50, 18).contains("Esc cancel"));
     }
 }
+
 
 
 

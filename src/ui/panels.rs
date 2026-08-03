@@ -20,59 +20,90 @@ fn ink(color: &Rgb) -> Style {
     Style::default().fg(color.to_color())
 }
 
+/// The line down the far side of the sidebar, which is all that separates it
+/// from the pane beside it now that neither of them is boxed.
+pub fn draw_sidebar_edge(frame: &mut Frame, app: &AppService, area: Rect) {
+    let rule = Rect { x: area.right(), y: area.y, width: 1, height: area.height };
+    let line = Line::from(Span::styled("│", ink(&app.theme.border)));
+
+    frame.render_widget(Paragraph::new(vec![line; area.height as usize]), rule);
+}
+
 pub fn draw_search_bar(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
     let is_focused = app.mode == Mode::Search;
 
+    // a column of air so the box does not run straight into the panel edge
+    let area = Rect { width: area.width.saturating_sub(1), ..area };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(if is_focused { t.border_focused() } else { t.border() })
-        .title(Span::styled(" Filter ", if is_focused { t.title() } else { t.muted() }))
+        .border_style(ink(if is_focused { &t.border_focused } else { &t.border }))
+        .title(Span::styled(
+            " Filter ",
+            if is_focused { ink(&t.accent).add_modifier(Modifier::BOLD) } else { ink(&t.muted) },
+        ))
         .padding(Padding::new(1, 1, 0, 0))
-        .style(t.base());
+        .style(t.input());
 
-    let mut spans = vec![Span::styled("/ ", t.accent())];
+    let mut spans = vec![Span::styled("/ ", ink(&t.accent))];
 
     if app.search_query.is_empty() {
         if is_focused {
-            spans.push(Span::styled("▎", Style::default().fg(t.input_cursor.to_color())));
+            spans.push(Span::styled("▎", ink(&t.input_cursor)));
         }
-        spans.push(Span::styled(" type to narrow the list", t.muted()));
+        spans.push(Span::styled(" type to narrow the list", ink(&t.muted)));
     } else {
-        spans.push(Span::styled(&app.search_query, t.base().add_modifier(Modifier::BOLD)));
+        spans.push(Span::styled(&app.search_query, ink(&t.fg).add_modifier(Modifier::BOLD)));
         if is_focused {
-            spans.push(Span::styled("▎", Style::default().fg(t.input_cursor.to_color())));
+            spans.push(Span::styled("▎", ink(&t.input_cursor)));
         }
         spans.push(Span::styled(
             format!("   {} of {}", app.visible_hosts().len(), app.host_count()),
-            t.muted(),
+            ink(&t.muted),
         ));
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)).block(block), area);
 }
 
-/// The panel the cards live in. Built in one place because mouse hit testing
-/// needs the very same borders and padding the renderer uses.
+/// The surface the cards sit on. Built in one place because mouse hit testing
+/// needs the very same padding the renderer uses. The three rows it keeps free
+/// at the top are the header and the air around it.
 fn list_block(app: &AppService) -> Block<'static> {
+    Block::default().padding(Padding::new(1, 1, 3, 0)).style(app.theme.input())
+}
+
+fn list_header(app: &AppService) -> String {
+    if app.has_filter() {
+        return format!(
+            "Hosts {}/{}  '{}'",
+            app.visible_hosts().len(),
+            app.host_count(),
+            ellipsize(&app.search_query, 12)
+        );
+    }
+
+    format!("Hosts {}", app.host_count())
+}
+
+/// The count, then a rule out to the far side of the panel.
+fn draw_list_header(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
-    let is_focused = matches!(app.mode, Mode::Normal | Mode::Search);
+    let row = Rect { x: area.x + 1, y: area.y + 1, width: area.width.saturating_sub(2), height: 1 };
 
-    let entries = app.visible_hosts();
-    let title = if app.has_filter() {
-        format!(" Hosts {}/{}  '{}' ", entries.len(), app.host_count(), ellipsize(&app.search_query, 12))
-    } else {
-        format!(" Hosts {} ", app.host_count())
-    };
+    let title = list_header(app);
+    let rule = (row.width as usize).saturating_sub(title.chars().count() + 1);
 
-    Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(if is_focused { t.border_focused() } else { t.border() })
-        .title(Span::styled(title, if is_focused { t.title() } else { t.muted() }))
-        .padding(Padding::new(1, 1, 1, 0))
-        .style(t.base())
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(title, ink(&t.muted)),
+            Span::raw(" "),
+            Span::styled("─".repeat(rule), ink(&t.border)),
+        ])),
+        row,
+    );
 }
 
 /// Where the cards land inside the panel. Every card is the same height, so
@@ -87,8 +118,9 @@ pub struct Cards {
 pub fn cards(app: &AppService, area: Rect) -> Cards {
     let inner = list_block(app).inner(area);
 
-    // a card is its own little box: two edges around the two lines it holds
-    let height = 4;
+    // the two lines a host is written on, and a blank one holding it apart
+    // from the next
+    let height = 3;
     let visible = (inner.height / height).max(1) as usize;
 
     Cards {
@@ -130,6 +162,7 @@ pub fn draw_host_list(frame: &mut Frame, app: &AppService, area: Rect) {
             ("No hosts yet", "Press 'a' to add your first one")
         };
         draw_placeholder(frame, app, block, area, headline, hint);
+        draw_list_header(frame, app, area);
         return;
     }
 
@@ -152,14 +185,16 @@ pub fn draw_host_list(frame: &mut Frame, app: &AppService, area: Rect) {
         &mut state,
     );
 
+    draw_list_header(frame, app, area);
+
     if entries.len() > layout.visible {
         let mut scrollbar_state = ScrollbarState::new(entries.len()).position(app.cursor);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
                 .end_symbol(None)
-                .style(t.border()),
-            area.inner(&Margin { vertical: 1, horizontal: 0 }),
+                .style(ink(&t.border)),
+            area.inner(&Margin { vertical: 2, horizontal: 0 }),
             &mut scrollbar_state,
         );
     }
@@ -183,20 +218,23 @@ fn key_name(host: &SshHost) -> &str {
     host.identity_file.rsplit('/').next().unwrap_or("")
 }
 
+/// A host, written flat on two lines. Nothing is drawn around it, so the one
+/// under the cursor is marked by the bar down its side and the surface it sits
+/// on rather than by a shape the others do not have.
 fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -> Vec<Line<'a>> {
     let t = &app.theme;
 
-    // INFO: every card keeps the same rounded frame, so selection shows in the
-    // colour it is drawn in rather than in a different shape
-    let glyphs = ["╭", "─", "╮", "│ ", " │", "╰", "╯"];
-    let (edge, alias_style) = if is_selected {
-        (t.accent(), t.bold_accent())
-    } else {
-        (t.border(), t.base().add_modifier(Modifier::BOLD))
+    let surface = match is_selected {
+        true => Style::default().bg(t.selected_bg.to_color()),
+        false => Style::default(),
+    };
+    let bar = match is_selected {
+        true => Span::styled("▎ ", ink(&t.accent)),
+        false => Span::raw("  "),
     };
 
-    // "│ " on the left and " │" on the right leave this much for the text
-    let room = width.saturating_sub(4);
+    // the bar on the left and a column of air on the right
+    let room = width.saturating_sub(3);
 
     let target = if host.user.is_empty() {
         host.display_host().to_string()
@@ -204,58 +242,46 @@ fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -
         format!("{}@{}", host.user, host.display_host())
     };
 
-    let port = host
-        .has_custom_port()
-        .then(|| Span::styled(format!(" :{} ", host.port), t.pill(&t.accent_secondary)));
-    let key = key_name(host);
+    // INFO: the chip has to change surface on the selected row, or it is the
+    // same colour as the fill behind it and disappears
+    let chip = Style::default().fg(t.accent_secondary.to_color()).bg(match is_selected {
+        true => t.background(),
+        false => t.selected_bg.to_color(),
+    });
 
+    let key = key_name(host);
     let (lamp, lamp_style) = lamp_for(app, host);
 
     let mut head: Vec<Span> = Vec::new();
-    if let Some(port) = port {
-        head.push(port);
+    if host.has_custom_port() {
+        head.push(Span::styled(format!(" :{} ", host.port), chip));
         head.push(Span::raw(" "));
     }
     head.push(Span::styled(lamp, lamp_style));
 
     vec![
-        Line::from(Span::styled(
-            format!("{}{}{}", glyphs[0], glyphs[1].repeat(width.saturating_sub(2)), glyphs[2]),
-            edge,
-        )),
-        inside_many(glyphs, edge, room, &host.alias, alias_style, head),
-        inside(
-            glyphs,
-            edge,
+        row_line(bar, room, &host.alias, ink(&t.fg).add_modifier(Modifier::BOLD), head)
+            .style(surface),
+        row_line(
+            Span::raw("  "),
             room,
             &target,
-            t.muted(),
-            (!key.is_empty()).then(|| Span::styled(key.to_string(), t.muted())),
-        ),
-        Line::from(Span::styled(
-            format!("{}{}{}", glyphs[5], glyphs[1].repeat(width.saturating_sub(2)), glyphs[6]),
-            edge,
-        )),
+            ink(if is_selected { &t.accent } else { &t.muted }),
+            (!key.is_empty())
+                .then(|| Span::styled(key.to_string(), ink(&t.muted)))
+                .into_iter()
+                .collect(),
+        )
+        .style(surface),
+        Line::from(""),
     ]
 }
 
-/// A line inside a card: something on the left, something optional pushed hard
-/// right, and the card's own sides around them. The left gives way first when
-/// the two of them will not fit.
-fn inside<'a>(
-    glyphs: [&'a str; 7],
-    edge: Style,
-    room: usize,
-    text: &str,
-    style: Style,
-    meta: Option<Span<'a>>,
-) -> Line<'a> {
-    inside_many(glyphs, edge, room, text, style, meta.into_iter().collect())
-}
-
-fn inside_many<'a>(
-    glyphs: [&'a str; 7],
-    edge: Style,
+/// A line of a card: the bar down its side, something on the left, and
+/// something optional pushed hard right. The left gives way first when the two
+/// of them will not fit.
+fn row_line<'a>(
+    bar: Span<'a>,
     room: usize,
     text: &str,
     style: Style,
@@ -269,12 +295,12 @@ fn inside_many<'a>(
     let used = text.chars().count() + taken.saturating_sub(1);
 
     let mut spans = vec![
-        Span::styled(glyphs[3], edge),
+        bar,
         Span::styled(text, style),
         Span::raw(" ".repeat(room.saturating_sub(used))),
     ];
     spans.extend(meta);
-    spans.push(Span::styled(glyphs[4], edge));
+    spans.push(Span::raw(" "));
 
     Line::from(spans)
 }
@@ -286,10 +312,10 @@ fn draw_placeholder(frame: &mut Frame, app: &AppService, block: Block, area: Rec
     let mut lines = vec![Line::from(""); (inner.height / 2).saturating_sub(2) as usize];
     lines.push(Line::from(Span::styled(
         headline.to_string(),
-        t.base().add_modifier(Modifier::BOLD),
+        ink(&t.fg).add_modifier(Modifier::BOLD),
     )));
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(hint.to_string(), t.muted())));
+    lines.push(Line::from(Span::styled(hint.to_string(), ink(&t.muted))));
 
     frame.render_widget(
         Paragraph::new(lines).alignment(Alignment::Center).block(block),
