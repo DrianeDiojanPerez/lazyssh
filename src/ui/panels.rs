@@ -217,17 +217,13 @@ fn key_name(host: &SshHost) -> &str {
     host.identity_file.rsplit('/').next().unwrap_or("")
 }
 
-/// A host, written on two lines. The one under the cursor is boxed and sits on
-/// its own surface; the rest are flat. Every card is the same height either
-/// way, so the rows the box takes are the air the others leave empty and
-/// nothing shifts as the cursor moves.
+/// A host, written on two lines. The one under the cursor is boxed and the rest
+/// are flat. Every card is the same height either way, so the rows the box
+/// takes are the air the others leave empty and nothing shifts as the cursor
+/// moves.
 fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -> Vec<Line<'a>> {
     let t = &app.theme;
 
-    let surface = match is_selected {
-        true => Style::default().bg(t.selected_bg.to_color()),
-        false => Style::default(),
-    };
     let edge = ink(&t.accent);
     let (left, right) = match is_selected {
         true => (Span::styled("│ ", edge), Span::styled(" │", edge)),
@@ -243,12 +239,9 @@ fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -
         format!("{}@{}", host.user, host.display_host())
     };
 
-    // INFO: the chip has to change surface on the selected row, or it is the
-    // same colour as the fill behind it and disappears
-    let chip = Style::default().fg(t.accent_secondary.to_color()).bg(match is_selected {
-        true => t.background(),
-        false => t.selected_bg.to_color(),
-    });
+    let chip = Style::default()
+        .fg(t.accent_secondary.to_color())
+        .bg(t.selected_bg.to_color());
 
     let key = key_name(host);
     let (lamp, lamp_style) = lamp_for(app, host);
@@ -269,8 +262,7 @@ fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -
             &host.alias,
             ink(&t.fg).add_modifier(Modifier::BOLD),
             head,
-        )
-        .style(surface),
+        ),
         row_line(
             left,
             right,
@@ -281,8 +273,7 @@ fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -
                 .then(|| Span::styled(key.to_string(), ink(&t.muted)))
                 .into_iter()
                 .collect(),
-        )
-        .style(surface),
+        ),
         rule(is_selected, "╰", "╯", edge, width),
     ]
 }

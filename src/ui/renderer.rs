@@ -776,9 +776,9 @@ mod tests {
             screen
         );
         assert_eq!(
-            buffer.get(list.x + 1, row).style().bg,
-            Some(app.theme.selected_bg.to_color()),
-            "the selected card should sit on its own surface:\n{}",
+            buffer.get(list.x + 3, row).style().bg,
+            buffer.get(list.x + 3, unselected).style().bg,
+            "the selected card should not be filled in:\n{}",
             screen
         );
     }
@@ -1046,6 +1046,7 @@ mod tests {
     }
 
 }
+
 
 
 
