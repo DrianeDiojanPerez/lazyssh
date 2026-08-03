@@ -1,71 +1,108 @@
-use crossterm::event::KeyCode;
 use ratatui::{
-    layout::{Alignment, Constraint, Margin, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{
         Block, BorderType, Borders, Cell, Padding, Paragraph, Row, Scrollbar,
-        ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
+        ScrollbarOrientation, ScrollbarState, Table, TableState,
     },
     Frame,
 };
 
-use crate::models::{Mode, Reachability, SshHost};
+use crate::models::{Mode, Reachability, Rgb, SshHost};
 use crate::services::AppService;
+
+/// Colour without a background, for anything drawn on top of a surface that
+/// has already been filled: the theme's own styles carry the page background
+/// and would punch a hole through the card they sit in.
+fn ink(color: &Rgb) -> Style {
+    Style::default().fg(color.to_color())
+}
+
+/// The line down the far side of the sidebar, which is all that separates it
+/// from the pane beside it now that neither of them is boxed.
+pub fn draw_sidebar_edge(frame: &mut Frame, app: &AppService, area: Rect) {
+    let rule = Rect { x: area.right(), y: area.y, width: 1, height: area.height };
+    let line = Line::from(Span::styled("│", ink(&app.theme.border)));
+
+    frame.render_widget(Paragraph::new(vec![line; area.height as usize]), rule);
+}
 
 pub fn draw_search_bar(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
     let is_focused = app.mode == Mode::Search;
 
+    // a column of air so the box does not run straight into the panel edge
+    let area = Rect { width: area.width.saturating_sub(1), ..area };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(if is_focused { t.border_focused() } else { t.border() })
-        .title(Span::styled(" Filter ", if is_focused { t.title() } else { t.muted() }))
+        .border_style(ink(if is_focused { &t.border_focused } else { &t.border }))
+        .title(Span::styled(
+            " Filter ",
+            if is_focused { ink(&t.accent).add_modifier(Modifier::BOLD) } else { ink(&t.muted) },
+        ))
         .padding(Padding::new(1, 1, 0, 0))
-        .style(t.base());
+        .style(t.input());
 
-    let mut spans = vec![Span::styled("/ ", t.accent())];
+    let mut spans = vec![Span::styled("/ ", ink(&t.accent))];
 
     if app.search_query.is_empty() {
         if is_focused {
-            spans.push(Span::styled("▎", Style::default().fg(t.input_cursor.to_color())));
+            spans.push(Span::styled("▎", ink(&t.input_cursor)));
         }
-        spans.push(Span::styled(" type to narrow the list", t.muted()));
+        spans.push(Span::styled(" type to narrow the list", ink(&t.muted)));
     } else {
-        spans.push(Span::styled(&app.search_query, t.base().add_modifier(Modifier::BOLD)));
+        spans.push(Span::styled(&app.search_query, ink(&t.fg).add_modifier(Modifier::BOLD)));
         if is_focused {
-            spans.push(Span::styled("▎", Style::default().fg(t.input_cursor.to_color())));
+            spans.push(Span::styled("▎", ink(&t.input_cursor)));
         }
         spans.push(Span::styled(
             format!("   {} of {}", app.visible_hosts().len(), app.host_count()),
-            t.muted(),
+            ink(&t.muted),
         ));
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)).block(block), area);
 }
 
-/// The panel the cards live in. Built in one place because mouse hit testing
-/// needs the very same borders and padding the renderer uses.
+/// The surface the cards sit on. Built in one place because mouse hit testing
+/// needs the very same padding the renderer uses. The three rows it keeps free
+/// at the top are the header and the air around it.
 fn list_block(app: &AppService) -> Block<'static> {
+    Block::default().padding(Padding::new(1, 1, 3, 0)).style(app.theme.input())
+}
+
+fn list_header(app: &AppService) -> String {
+    if app.has_filter() {
+        return format!(
+            "Hosts {}/{}  '{}'",
+            app.visible_hosts().len(),
+            app.host_count(),
+            ellipsize(&app.search_query, 12)
+        );
+    }
+
+    format!("Hosts {}", app.host_count())
+}
+
+/// The count, then a rule out to the far side of the panel.
+fn draw_list_header(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
-    let is_focused = matches!(app.mode, Mode::Normal | Mode::Search);
+    let row = Rect { x: area.x + 1, y: area.y + 1, width: area.width.saturating_sub(2), height: 1 };
 
-    let entries = app.visible_hosts();
-    let title = if app.has_filter() {
-        format!(" Hosts {}/{}  '{}' ", entries.len(), app.host_count(), ellipsize(&app.search_query, 12))
-    } else {
-        format!(" Hosts {} ", app.host_count())
-    };
+    let title = list_header(app);
+    let rule = (row.width as usize).saturating_sub(title.chars().count() + 1);
 
-    Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(if is_focused { t.border_focused() } else { t.border() })
-        .title(Span::styled(title, if is_focused { t.title() } else { t.muted() }))
-        .padding(Padding::new(1, 1, 1, 0))
-        .style(t.base())
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(title, ink(&t.muted)),
+            Span::raw(" "),
+            Span::styled("─".repeat(rule), ink(&t.border)),
+        ])),
+        row,
+    );
 }
 
 /// Where the cards land inside the panel. Every card is the same height, so
@@ -80,7 +117,8 @@ pub struct Cards {
 pub fn cards(app: &AppService, area: Rect) -> Cards {
     let inner = list_block(app).inner(area);
 
-    // a card is its own little box: two edges around the two lines it holds
+    // the two lines a host is written on, and the two the box around the
+    // selected one needs
     let height = 4;
     let visible = (inner.height / height).max(1) as usize;
 
@@ -123,6 +161,7 @@ pub fn draw_host_list(frame: &mut Frame, app: &AppService, area: Rect) {
             ("No hosts yet", "Press 'a' to add your first one")
         };
         draw_placeholder(frame, app, block, area, headline, hint);
+        draw_list_header(frame, app, area);
         return;
     }
 
@@ -145,16 +184,29 @@ pub fn draw_host_list(frame: &mut Frame, app: &AppService, area: Rect) {
         &mut state,
     );
 
+    draw_list_header(frame, app, area);
+
     if entries.len() > layout.visible {
         let mut scrollbar_state = ScrollbarState::new(entries.len()).position(app.cursor);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
                 .end_symbol(None)
-                .style(t.border()),
-            area.inner(&Margin { vertical: 1, horizontal: 0 }),
+                .style(ink(&t.border)),
+            area.inner(&Margin { vertical: 2, horizontal: 0 }),
             &mut scrollbar_state,
         );
+    }
+}
+
+fn lamp_for(app: &AppService, host: &SshHost) -> (&'static str, Style) {
+    let t = &app.theme;
+
+    match app.probes.status(&host.alias) {
+        Reachability::Online => ("●", ink(&t.success)),
+        Reachability::Offline => ("●", ink(&t.error)),
+        Reachability::Checking => ("◌", ink(&t.muted)),
+        Reachability::Unknown => ("○", ink(&t.muted)),
     }
 }
 
@@ -165,19 +217,20 @@ fn key_name(host: &SshHost) -> &str {
     host.identity_file.rsplit('/').next().unwrap_or("")
 }
 
+/// A host, written on two lines. The one under the cursor is boxed and the rest
+/// are flat. Every card is the same height either way, so the rows the box
+/// takes are the air the others leave empty and nothing shifts as the cursor
+/// moves.
 fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -> Vec<Line<'a>> {
     let t = &app.theme;
 
-    // INFO: every card keeps the same rounded frame, so selection shows in the
-    // colour it is drawn in rather than in a different shape
-    let glyphs = ["╭", "─", "╮", "│ ", " │", "╰", "╯"];
-    let (edge, alias_style) = if is_selected {
-        (t.accent(), t.bold_accent())
-    } else {
-        (t.border(), t.base().add_modifier(Modifier::BOLD))
+    let edge = ink(&t.accent);
+    let (left, right) = match is_selected {
+        true => (Span::styled("│ ", edge), Span::styled(" │", edge)),
+        false => (Span::raw("  "), Span::raw("  ")),
     };
 
-    // "│ " on the left and " │" on the right leave this much for the text
+    // the sides of the box, whether they are drawn or left as air
     let room = width.saturating_sub(4);
 
     let target = if host.user.is_empty() {
@@ -186,63 +239,63 @@ fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -
         format!("{}@{}", host.user, host.display_host())
     };
 
-    let port = host
-        .has_custom_port()
-        .then(|| Span::styled(format!(" :{} ", host.port), t.pill(&t.accent_secondary)));
-    let key = key_name(host);
+    let chip = Style::default()
+        .fg(t.accent_secondary.to_color())
+        .bg(t.selected_bg.to_color());
 
-    let (lamp, lamp_style) = match app.probes.status(&host.alias) {
-        Reachability::Online => ("●", t.success_dot()),
-        Reachability::Offline => ("●", t.error()),
-        Reachability::Checking => ("◌", t.muted()),
-        Reachability::Unknown => ("○", t.muted()),
-    };
+    let key = key_name(host);
+    let (lamp, lamp_style) = lamp_for(app, host);
 
     let mut head: Vec<Span> = Vec::new();
-    if let Some(port) = port {
-        head.push(port);
+    if host.has_custom_port() {
+        head.push(Span::styled(format!(" :{} ", host.port), chip));
         head.push(Span::raw(" "));
     }
     head.push(Span::styled(lamp, lamp_style));
 
     vec![
-        Line::from(Span::styled(
-            format!("{}{}{}", glyphs[0], glyphs[1].repeat(width.saturating_sub(2)), glyphs[2]),
-            edge,
-        )),
-        inside_many(glyphs, edge, room, &host.alias, alias_style, head),
-        inside(
-            glyphs,
-            edge,
+        rule(is_selected, "╭", "╮", edge, width),
+        row_line(
+            left.clone(),
+            right.clone(),
+            room,
+            &host.alias,
+            ink(&t.fg).add_modifier(Modifier::BOLD),
+            head,
+        ),
+        row_line(
+            left,
+            right,
             room,
             &target,
-            t.muted(),
-            (!key.is_empty()).then(|| Span::styled(key.to_string(), t.muted())),
+            ink(if is_selected { &t.accent } else { &t.muted }),
+            (!key.is_empty())
+                .then(|| Span::styled(key.to_string(), ink(&t.muted)))
+                .into_iter()
+                .collect(),
         ),
-        Line::from(Span::styled(
-            format!("{}{}{}", glyphs[5], glyphs[1].repeat(width.saturating_sub(2)), glyphs[6]),
-            edge,
-        )),
+        rule(is_selected, "╰", "╯", edge, width),
     ]
 }
 
-/// A line inside a card: something on the left, something optional pushed hard
-/// right, and the card's own sides around them. The left gives way first when
-/// the two of them will not fit.
-fn inside<'a>(
-    glyphs: [&'a str; 7],
-    edge: Style,
-    room: usize,
-    text: &str,
-    style: Style,
-    meta: Option<Span<'a>>,
-) -> Line<'a> {
-    inside_many(glyphs, edge, room, text, style, meta.into_iter().collect())
+/// One of the two edges of the box, or the air it is drawn in.
+fn rule<'a>(is_selected: bool, start: &str, end: &str, edge: Style, width: usize) -> Line<'a> {
+    if !is_selected {
+        return Line::from("");
+    }
+
+    Line::from(Span::styled(
+        format!("{}{}{}", start, "─".repeat(width.saturating_sub(2)), end),
+        edge,
+    ))
 }
 
-fn inside_many<'a>(
-    glyphs: [&'a str; 7],
-    edge: Style,
+/// A line of a card: the sides of the box, something on the left, and something
+/// optional pushed hard right. The left gives way first when the two of them
+/// will not fit.
+fn row_line<'a>(
+    left: Span<'a>,
+    right: Span<'a>,
     room: usize,
     text: &str,
     style: Style,
@@ -256,12 +309,12 @@ fn inside_many<'a>(
     let used = text.chars().count() + taken.saturating_sub(1);
 
     let mut spans = vec![
-        Span::styled(glyphs[3], edge),
+        left,
         Span::styled(text, style),
         Span::raw(" ".repeat(room.saturating_sub(used))),
     ];
     spans.extend(meta);
-    spans.push(Span::styled(glyphs[4], edge));
+    spans.push(right);
 
     Line::from(spans)
 }
@@ -273,10 +326,10 @@ fn draw_placeholder(frame: &mut Frame, app: &AppService, block: Block, area: Rec
     let mut lines = vec![Line::from(""); (inner.height / 2).saturating_sub(2) as usize];
     lines.push(Line::from(Span::styled(
         headline.to_string(),
-        t.base().add_modifier(Modifier::BOLD),
+        ink(&t.fg).add_modifier(Modifier::BOLD),
     )));
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(hint.to_string(), t.muted())));
+    lines.push(Line::from(Span::styled(hint.to_string(), ink(&t.muted))));
 
     frame.render_widget(
         Paragraph::new(lines).alignment(Alignment::Center).block(block),
@@ -285,68 +338,208 @@ fn draw_placeholder(frame: &mut Frame, app: &AppService, block: Block, area: Rec
 }
 
 pub fn draw_detail_panel(frame: &mut Frame, app: &AppService, area: Rect) {
-    let t = &app.theme;
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(t.border())
-        .title(Span::styled(" Details ", t.title()))
-        .padding(Padding::new(2, 2, 1, 0))
-        .style(t.base());
-
     let Some(host) = app.selected_host() else {
+        let block = Block::default().padding(Padding::new(2, 2, 1, 0)).style(app.theme.base());
         draw_placeholder(frame, app, block, area, "Nothing selected", "Pick a host on the left");
         return;
     };
 
-    let value = t.base();
-    let dim = t.muted();
+    let inner = area.inner(&Margin { horizontal: 2, vertical: 1 });
+    if inner.width < 12 || inner.height < 3 {
+        return;
+    }
+
+    // INFO: the card is the first thing to go on a short pane, since the block
+    // under it is what the panel is actually for
+    let wanted = if app.show_command { command_height(app, host) } else { 0 };
+    let command = if inner.height >= wanted + 8 { wanted } else { 0 };
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(command),
+            Constraint::Length(if command > 0 { 1 } else { 0 }),
+            Constraint::Min(3),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let width = inner.width as usize;
+
+    frame.render_widget(Paragraph::new(breadcrumb(app, host, width)), rows[0]);
+    if command > 0 {
+        draw_command_card(frame, app, host, rows[2]);
+    }
+    draw_config_card(frame, app, host, rows[4]);
+    frame.render_widget(Paragraph::new(detail_hints(app, width)), rows[6]);
+}
+
+/// Where the host sits: the file it was read out of, then the host itself,
+/// with the same lamp its card in the list wears. The host is the point of the
+/// line, so the file is what gives way when the two will not fit.
+fn breadcrumb<'a>(app: &AppService, host: &SshHost, width: usize) -> Line<'a> {
+    let t = &app.theme;
+    let (lamp, lamp_style) = lamp_for(app, host);
+    let path = app.config_path_display();
+
+    let mut spans = vec![Span::styled(lamp, lamp_style), Span::styled(" ", t.base())];
+
+    if 2 + path.chars().count() + 3 + host.alias.chars().count() <= width {
+        spans.push(Span::styled(path, t.muted()));
+        spans.push(Span::styled(" › ", t.border()));
+    }
+
+    spans.push(Span::styled(
+        ellipsize(&host.alias, width.saturating_sub(2)),
+        t.title(),
+    ));
+    Line::from(spans)
+}
+
+/// The surface both cards are drawn on, a shade off the panel behind them.
+fn card_block(app: &AppService) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(ink(&app.theme.border))
+        .padding(Padding::new(1, 1, 0, 0))
+        .style(app.theme.input())
+}
+
+fn command_height(app: &AppService, host: &SshHost) -> u16 {
+    match reach_line(app, host) {
+        Some(_) => 4,
+        None => 3,
+    }
+}
+
+/// What the probe found, said in words under the command. Nothing is said
+/// while the host has not been asked yet.
+fn reach_line(app: &AppService, host: &SshHost) -> Option<(&'static str, String, Style)> {
+    let t = &app.theme;
+
+    match app.probes.status(&host.alias) {
+        Reachability::Online => Some(("✓", format!("reachable at {}", target(host)), ink(&t.success))),
+        Reachability::Offline => Some((
+            "✗",
+            format!("no answer from {}:{}", host.display_host(), host.port),
+            ink(&t.error),
+        )),
+        Reachability::Checking => {
+            Some(("◌", format!("checking {}…", host.display_host()), ink(&t.warning)))
+        }
+        Reachability::Unknown => None,
+    }
+}
+
+fn target(host: &SshHost) -> String {
+    if host.user.is_empty() {
+        return host.display_host().to_string();
+    }
+    format!("{}@{}", host.user, host.display_host())
+}
+
+fn draw_command_card(frame: &mut Frame, app: &AppService, host: &SshHost, area: Rect) {
+    let t = &app.theme;
+    let block = card_block(app);
     let width = block.inner(area).width as usize;
 
-    let port_display = host.port.to_string();
-    let port_style = if host.has_custom_port() { value } else { dim };
+    let mut lines = vec![Line::from(Span::styled(
+        ellipsize(&format!("$ {}", host.as_ssh_command()), width),
+        ink(&t.success),
+    ))];
 
-    let user_display: &str = if host.user.is_empty() { "(default)" } else { &host.user };
-    let user_style = if host.user.is_empty() { dim } else { value };
-
-    let key_display: &str = if host.has_identity_file() { &host.identity_file } else { "(default)" };
-    let key_style = if host.has_identity_file() { value } else { dim };
-
-    let mut lines = vec![Line::from(vec![
-        Span::styled("▏ ", t.accent()),
-        Span::styled(host.alias.as_str(), t.title()),
-    ])];
-
-    if app.show_command {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            ellipsize(&format!(" $ {} ", host.as_ssh_command()), width),
-            t.input(),
-        )));
+    if let Some((mark, text, style)) = reach_line(app, host) {
+        lines.push(Line::from(vec![
+            Span::styled(mark, style),
+            Span::raw(" "),
+            Span::styled(ellipsize(&text, width.saturating_sub(2)), ink(&t.muted)),
+        ]));
     }
 
-    lines.push(Line::from(""));
-    lines.extend(detail_row("HostName ", host.display_host(), dim, value, width));
-    lines.extend(detail_row("Port     ", &port_display, dim, port_style, width));
-    lines.extend(detail_row("User     ", user_display, dim, user_style, width));
-    lines.extend(detail_row("Identity ", key_display, dim, key_style, width));
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
 
-    if host.has_extra_options() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("Extra options", t.bold_accent_secondary())));
-        for (k, v) in &host.extra_options {
-            lines.push(Line::from(vec![
-                Span::styled(format!("{:<10}", k), dim),
-                Span::styled(v.as_str(), value),
-            ]));
-        }
-    }
+fn draw_config_card(frame: &mut Frame, app: &AppService, host: &SshHost, area: Rect) {
+    let block = card_block(app);
+    let lines = config_lines(app, host, block.inner(area).width as usize);
 
-    frame.render_widget(
-        Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
-        area,
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// The host as it reads in the file, numbered down the side. The keywords are
+/// coloured by where they came from: the block header, the four fields the
+/// form knows about, and whatever else was typed in by hand.
+fn config_lines<'a>(app: &AppService, host: &SshHost, width: usize) -> Vec<Line<'a>> {
+    let t = &app.theme;
+    let value = ink(&t.fg);
+    let missing = ink(&t.muted);
+
+    let field = |name: &str, given: bool| (name.to_string(), ink(&t.accent), if given { value } else { missing });
+    let unset = || "(default)".to_string();
+
+    let mut entries = vec![
+        (host.alias.clone(), ("Host".to_string(), ink(&t.accent_secondary), value)),
+        (host.display_host().to_string(), field("HostName", true)),
+        (host.port.to_string(), field("Port", host.has_custom_port())),
+        (
+            if host.user.is_empty() { unset() } else { host.user.clone() },
+            field("User", !host.user.is_empty()),
+        ),
+        (
+            if host.has_identity_file() { host.identity_file.clone() } else { unset() },
+            field("IdentityFile", host.has_identity_file()),
+        ),
+    ];
+
+    entries.extend(
+        host.extra_options
+            .iter()
+            .map(|(k, v)| (v.clone(), (k.clone(), ink(&t.warning), value))),
     );
+
+    let gutter = entries.len().to_string().chars().count();
+
+    entries
+        .into_iter()
+        .enumerate()
+        .map(|(row, (text, (keyword, keyword_style, text_style)))| {
+            let room = width.saturating_sub(gutter + 3 + keyword.chars().count() + 1);
+            Line::from(vec![
+                Span::styled(format!("{:>1$}", row + 1, gutter), ink(&t.border)),
+                Span::styled(" │ ", ink(&t.border)),
+                Span::styled(keyword, keyword_style),
+                Span::raw(" "),
+                Span::styled(ellipsize(&text, room), text_style),
+            ])
+        })
+        .collect()
+}
+
+fn detail_hints<'a>(app: &AppService, width: usize) -> Line<'a> {
+    let t = &app.theme;
+    let mut spans = Vec::new();
+    let mut used = 0;
+
+    for (key, label) in [("↵", "connect"), ("e", "edit"), ("d", "delete")] {
+        let gap = if spans.is_empty() { 0 } else { 3 };
+        let room = key.chars().count() + label.chars().count() + 1;
+        if used + gap + room > width {
+            break;
+        }
+        used += gap + room;
+
+        if gap > 0 {
+            spans.push(Span::styled("   ", t.base()));
+        }
+        spans.push(Span::styled(key, t.bold_accent()));
+        spans.push(Span::styled(format!(" {}", label), t.muted()));
+    }
+
+    Line::from(spans)
 }
 
 fn ellipsize(text: &str, limit: usize) -> String {
@@ -354,218 +547,4 @@ fn ellipsize(text: &str, limit: usize) -> String {
         return text.to_string();
     }
     text.chars().take(limit.saturating_sub(1)).chain("…".chars()).collect()
-}
-
-/// Label and value share a line while they fit, and the value drops to its
-/// own indented line when they do not, which reads better than a wrap.
-fn detail_row<'a>(
-    label: &'a str,
-    value: &'a str,
-    label_style: Style,
-    value_style: Style,
-    width: usize,
-) -> Vec<Line<'a>> {
-    if label.chars().count() + value.chars().count() <= width {
-        return vec![Line::from(vec![
-            Span::styled(label, label_style),
-            Span::styled(value, value_style),
-        ])];
-    }
-
-    vec![
-        Line::from(Span::styled(label.trim_end(), label_style)),
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(ellipsize(value, width.saturating_sub(2)), value_style),
-        ]),
-    ]
-}
-
-pub fn draw_status_bar(frame: &mut Frame, app: &AppService, area: Rect) {
-    let t = &app.theme;
-
-    let meta = meta_spans(app, area.width);
-    let meta_width: usize = meta.iter().map(|s| s.content.chars().count()).sum();
-
-    let mut spans = vec![mode_chip(app), Span::styled("  ", t.status_bar())];
-    let mut used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-
-    for (_, _, key, label, _) in hint_layout(app, hint_room(app, area.width)) {
-        spans.push(Span::styled(key, t.bold_accent()));
-        spans.push(Span::styled(format!(" {}", label), t.muted()));
-        spans.push(Span::styled(" · ", t.border()));
-        used += key.chars().count() + label.chars().count() + 4;
-    }
-    spans.pop();
-    used = used.saturating_sub(3);
-
-    let gap = (area.width as usize).saturating_sub(used + meta_width);
-    spans.push(Span::styled(" ".repeat(gap), t.status_bar()));
-    spans.extend(meta);
-
-    frame.render_widget(Paragraph::new(Line::from(spans)).style(t.status_bar()), area);
-}
-
-/// Where the config is, how much is in it and what it is wearing. Segments are
-/// dropped from the end as the bar narrows, so the path outlives the version.
-fn meta_spans<'a>(app: &AppService, width: u16) -> Vec<Span<'a>> {
-    let t = &app.theme;
-    let transparency = if t.transparent { " [T]" } else { "" };
-
-    let segments = [
-        (app.config_path_display(), t.accent_secondary()),
-        (format!("{} hosts", app.host_count()), t.muted()),
-        (format!("{}{}", t.name, transparency), t.muted()),
-        (format!("v{}", env!("CARGO_PKG_VERSION")), t.border()),
-    ];
-
-    let mut spans: Vec<Span> = Vec::new();
-    let mut used = 1;
-
-    for (text, style) in segments {
-        let separator = if spans.is_empty() { 0 } else { 3 };
-        if used + separator + text.chars().count() > (width / 2) as usize {
-            break;
-        }
-        used += separator + text.chars().count();
-
-        if separator > 0 {
-            spans.push(Span::styled(" · ", t.border()));
-        }
-        spans.push(Span::styled(text, style));
-    }
-
-    spans.push(Span::styled(" ", t.status_bar()));
-    spans
-}
-
-fn hint_room(app: &AppService, width: u16) -> u16 {
-    let meta: usize = meta_spans(app, width).iter().map(|s| s.content.chars().count()).sum();
-    width.saturating_sub(meta as u16 + 1)
-}
-
-pub fn hint_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<KeyCode> {
-    if row != area.y {
-        return None;
-    }
-
-    hint_layout(app, hint_room(app, area.width))
-        .into_iter()
-        .find(|(x, width, _, _, _)| column >= *x && column < x + width)
-        .map(|(_, _, _, _, code)| code)
-}
-
-/// Lays the hints out left to right, dropping the ones that will not fit. The
-/// renderer and the mouse both read this, so a click always lands on the hint
-/// that is actually printed there.
-fn hint_layout(
-    app: &AppService,
-    width: u16,
-) -> Vec<(u16, u16, &'static str, &'static str, KeyCode)> {
-    let mut placed = Vec::new();
-    let mut x: u16 = mode_chip(app).content.chars().count() as u16 + 2;
-
-    // INFO: the way out of the current mode is worth more than the rest, so
-    // its width is reserved before the others are laid out
-    let escape = escape_hint(app);
-    let reserved = escape.0.chars().count() as u16 + escape.1.chars().count() as u16 + 4;
-
-    for (key, label, code) in hints_for(app) {
-        let span = key.chars().count() as u16 + label.chars().count() as u16 + 1;
-        if x + span + 3 + reserved > width {
-            break;
-        }
-
-        placed.push((x, span, *key, *label, *code));
-        x += span + 3;
-    }
-
-    let span = escape.0.chars().count() as u16 + escape.1.chars().count() as u16 + 1;
-    placed.push((x, span, escape.0, escape.1, escape.2));
-    placed
-}
-
-fn mode_chip<'a>(app: &AppService) -> Span<'a> {
-    if app.is_session_focused() {
-        return Span::styled(" SESSION ", app.theme.pill(&app.theme.success));
-    }
-
-    let label = match &app.mode {
-        Mode::Normal => "NORMAL",
-        Mode::Search => "SEARCH",
-        Mode::AddHost => "ADD",
-        Mode::EditHost(_) => "EDIT",
-        Mode::ConfirmDelete(_) => "DELETE",
-        Mode::SelectTheme => "THEME",
-        Mode::ChooseLaunch => "CONNECT",
-        Mode::Settings => "SETTINGS",
-        Mode::Help => "HELP",
-    };
-
-    Span::styled(format!(" {} ", label), app.theme.selected())
-}
-
-fn escape_hint(app: &AppService) -> (&'static str, &'static str, KeyCode) {
-    if app.is_session_focused() {
-        return ("C-b", "sidebar", KeyCode::Null);
-    }
-
-    match &app.mode {
-        Mode::Normal => ("?", "help", KeyCode::Char('?')),
-        Mode::Search => ("Esc", "clear", KeyCode::Esc),
-        Mode::AddHost | Mode::EditHost(_) => ("Esc", "cancel", KeyCode::Esc),
-        Mode::ConfirmDelete(_) => ("Esc", "keep", KeyCode::Esc),
-        Mode::SelectTheme | Mode::Settings | Mode::Help => ("Esc", "close", KeyCode::Esc),
-        Mode::ChooseLaunch => ("Esc", "cancel", KeyCode::Esc),
-    }
-}
-
-/// The hints that matter in the current mode, most useful first, so the
-/// status bar degrades sensibly on a narrow terminal.
-fn hints_for(app: &AppService) -> &'static [(&'static str, &'static str, KeyCode)] {
-    if app.is_session_focused() {
-        return &[("keys", "go to the session", KeyCode::Null)];
-    }
-
-    match &app.mode {
-        Mode::Normal => &[
-            ("↵", "connect", KeyCode::Enter),
-            ("a", "add", KeyCode::Char('a')),
-            ("e", "edit", KeyCode::Char('e')),
-            ("d", "delete", KeyCode::Char('d')),
-            ("/", "filter", KeyCode::Char('/')),
-            ("q", "quit", KeyCode::Char('q')),
-            ("↑↓", "move", KeyCode::Null),
-            ("c", "command", KeyCode::Char('c')),
-            ("r", "reload", KeyCode::Char('r')),
-            ("w", "close tab", KeyCode::Char('w')),
-            ("s", "settings", KeyCode::Char('s')),
-            ("t", "theme", KeyCode::Char('t')),
-            ("T", "transparency", KeyCode::Char('T')),
-        ],
-        Mode::Search => &[
-            ("type", "to filter", KeyCode::Null),
-            ("↵", "keep filter", KeyCode::Enter),
-            ("↑↓", "move", KeyCode::Null),
-        ],
-        Mode::AddHost | Mode::EditHost(_) => &[
-            ("Tab", "next field", KeyCode::Tab),
-            ("S-Tab", "previous", KeyCode::BackTab),
-            ("↵", "save", KeyCode::Enter),
-        ],
-        Mode::ConfirmDelete(_) => &[("y", "delete", KeyCode::Char('y'))],
-        Mode::SelectTheme => &[
-            ("↑↓", "browse", KeyCode::Null),
-            ("↵", "apply", KeyCode::Enter),
-        ],
-        Mode::ChooseLaunch => &[
-            ("t", "in a tab", KeyCode::Char('t')),
-            ("f", "whole terminal", KeyCode::Char('f')),
-        ],
-        Mode::Settings => &[
-            ("↑↓", "browse", KeyCode::Null),
-            ("↵", "choose", KeyCode::Enter),
-        ],
-        Mode::Help => &[],
-    }
 }

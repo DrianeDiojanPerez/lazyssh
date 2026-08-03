@@ -1,6 +1,7 @@
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
 
@@ -8,10 +9,18 @@ use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySyste
 /// looks like this, so it doubles as "it has not said yet".
 const UNFINISHED: i32 = i32::MIN;
 
+/// How long a connection is shown as being made even after the far end has
+/// answered. A host on the same network answers before the eye can follow it,
+/// and a screen that flickers past reads as a fault rather than as a
+/// connection being made.
+pub const SETTLE: Duration = Duration::from_secs(2);
+
 pub struct Session {
     pub alias: String,
     pub screen: Arc<Mutex<vt100::Parser>>,
     running: Arc<AtomicBool>,
+    spoken: Arc<AtomicBool>,
+    opened: Instant,
     exit: Arc<AtomicI32>,
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
@@ -62,12 +71,14 @@ impl Session {
 
         let screen = Arc::new(Mutex::new(vt100::Parser::new(size.rows, size.cols, 2000)));
         let running = Arc::new(AtomicBool::new(true));
+        let spoken = Arc::new(AtomicBool::new(false));
         let exit = Arc::new(AtomicI32::new(UNFINISHED));
 
         // INFO: the reader stops at the end of the output but says nothing
         // about the process: the terminal closing is not the same as ssh
         // being gone, and only the one below knows that
         let feed = Arc::clone(&screen);
+        let heard = Arc::clone(&spoken);
         std::thread::spawn(move || {
             let mut buffer = [0u8; 8192];
             loop {
@@ -77,6 +88,7 @@ impl Session {
                         if let Ok(mut screen) = feed.lock() {
                             screen.process(&buffer[..read]);
                         }
+                        heard.store(true, Ordering::SeqCst);
                     }
                 }
             }
@@ -97,6 +109,8 @@ impl Session {
             alias: alias.to_string(),
             screen,
             running,
+            spoken,
+            opened: Instant::now(),
             exit,
             writer,
             master: pair.master,
@@ -107,6 +121,23 @@ impl Session {
 
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
+    }
+
+    /// Whether the far end has sent anything at all. Until it has there is
+    /// nothing to paint, and ssh is still off resolving, connecting or agreeing
+    /// on keys.
+    pub fn has_spoken(&self) -> bool {
+        self.spoken.load(Ordering::SeqCst)
+    }
+
+    pub fn waiting_for(&self) -> Duration {
+        self.opened.elapsed()
+    }
+
+    /// Whether the session is still being made rather than being used, which is
+    /// what is worth saying so out loud for.
+    pub fn is_connecting(&self) -> bool {
+        self.is_running() && (!self.has_spoken() || self.waiting_for() < SETTLE)
     }
 
     pub fn exit_code(&self) -> Option<i32> {

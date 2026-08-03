@@ -162,6 +162,7 @@ fn run_tui(
 
     let action = loop {
         app.reap_finished_sessions();
+        app.advance_launch();
 
         // INFO: the pty is told the size of the pane before it is drawn, so
         // the remote end lays out for the space it actually has
@@ -176,7 +177,10 @@ fn run_tui(
         // INFO: toasts age by however long the frame took, but only while some
         // were already on screen: with none, the loop sits in a blocking read
         // and that whole wait would otherwise expire the toast it wakes up for
-        let animating = app.has_toasts() || app.has_live_session() || app.probes.is_working();
+        let animating = app.has_toasts()
+            || app.has_live_session()
+            || app.is_launching()
+            || app.probes.is_working();
         input::handle_next_event(app, ssh_repo, theme_repo, &mut clicks)?;
 
         let now = Instant::now();

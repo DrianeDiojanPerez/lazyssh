@@ -46,7 +46,7 @@ pub struct Theme {
 }
 
 impl Theme {
-    fn background(&self) -> Color {
+    pub fn background(&self) -> Color {
         if self.transparent { Color::Reset } else { self.bg.to_color() }
     }
 
@@ -82,12 +82,6 @@ impl Theme {
 
     pub fn accent_secondary(&self) -> Style {
         Style::default().fg(self.accent_secondary.to_color()).bg(self.background())
-    }
-
-    pub fn status_bar(&self) -> Style {
-        Style::default()
-            .fg(self.status_bar_fg.to_color())
-            .bg(if self.transparent { Color::Reset } else { self.status_bar_bg.to_color() })
     }
 
     pub fn surface(&self) -> Style {
@@ -146,6 +140,8 @@ pub struct ThemePreference {
     pub tab_edges: bool,
     #[serde(default = "yes")]
     pub tab_panel: bool,
+    #[serde(default = "yes")]
+    pub connecting: bool,
 }
 
 fn yes() -> bool {
@@ -164,6 +160,7 @@ impl Default for ThemePreference {
             launch_style: LaunchStyle::Ask,
             tab_edges: false,
             tab_panel: true,
+            connecting: true,
         }
     }
 }

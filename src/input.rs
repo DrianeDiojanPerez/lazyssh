@@ -41,9 +41,12 @@ pub fn handle_next_event(
     theme_repo: &dyn ThemeRepository,
     clicks: &mut Clicks,
 ) -> std::io::Result<()> {
-    if (app.has_toasts() || app.has_live_session() || app.probes.is_working())
-        && !event::poll(FRAME)?
-    {
+    let moving = app.has_toasts()
+        || app.has_live_session()
+        || app.is_launching()
+        || app.probes.is_working();
+
+    if moving && !event::poll(FRAME)? {
         return Ok(());
     }
 
@@ -188,15 +191,20 @@ fn on_mouse(
             })
         }
 
+        // INFO: the pointer only says which side is being worked in, so the
+        // keys follow it across. What is selected, and the details that go with
+        // it, still wait to be clicked
+        (Mode::Normal | Mode::Search, MouseEventKind::Moved) if !app.is_launching() => {
+            if frames.sidebar.is_some_and(|side| within(side, column, row)) {
+                app.focus_sidebar();
+            } else if within(frames.main, column, row) {
+                app.focus_session();
+            }
+            return Ok(());
+        }
+
         (_, MouseEventKind::Down(MouseButton::Left)) => {}
         _ => return Ok(()),
-    }
-
-    // INFO: the hints are a row of buttons in every mode, so they are offered
-    // the click before whatever mode is on screen
-    if let Some(code) = panels::hint_at(app, frames.status, column, row) {
-        dispatch_key(app, KeyEvent::new(code, KeyModifiers::NONE), ssh_repo, theme_repo);
-        return Ok(());
     }
 
     match tabs::tab_at(app, frames.tabs, column, row) {
@@ -273,6 +281,11 @@ fn on_mouse(
 
 fn ok(_: ()) -> std::io::Result<()> {
     Ok(())
+}
+
+/// The whole of a rectangle, rather than the one row `hits` looks at.
+fn within(rect: Rect, column: u16, row: u16) -> bool {
+    column >= rect.x && column < rect.right() && row >= rect.y && row < rect.bottom()
 }
 
 fn hits(rect: Rect, column: u16, row: u16) -> bool {
@@ -385,6 +398,9 @@ fn on_form(app: &mut AppService, key: KeyEvent, ssh_repo: &dyn SshRepository) {
             commit_form(app, ssh_repo);
         }
         KeyCode::Enter if app.accept_suggestion() => {}
+        // INFO: a list field needs Enter for its own line breaks, so the way
+        // out of it is Tab or the Save button, and Ctrl-S from anywhere
+        KeyCode::Enter if app.form_field.is_multiline() => app.form_new_line(),
         KeyCode::Enter => commit_form(app, ssh_repo),
 
         KeyCode::Backspace => app.form_delete_char(),

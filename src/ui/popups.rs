@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use ratatui::{
     layout::{Alignment, Rect},
     style::{Modifier, Style},
@@ -21,6 +23,52 @@ fn centered(width: u16, height: u16, area: Rect) -> Rect {
     }
 }
 
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// What is on screen while ssh is off resolving, connecting and agreeing on
+/// keys, whether the session is being made in a tab or the terminal is about to
+/// be handed over. It sits over what was already there rather than taking the
+/// screen, so there is still something to read while the wait goes on. The mark
+/// is worked out from the clock, so nothing has to be stepped along to turn it.
+pub fn draw_connecting(
+    frame: &mut Frame,
+    app: &AppService,
+    alias: &str,
+    waited: Duration,
+    body: Rect,
+) {
+    let t = &app.theme;
+
+    let target = app
+        .host_named(alias)
+        .map(|host| host.display_host().to_string())
+        .unwrap_or_else(|| alias.to_string());
+
+    let said = format!("Connecting to {}…", target);
+    let area = centered(said.chars().count() as u16 + 12, 5, body);
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(t.accent())
+        .title(Span::styled(format!(" {} ", alias), t.title()))
+        .title_alignment(Alignment::Center)
+        .padding(Padding::new(2, 2, 1, 0))
+        .style(t.base());
+
+    let turn = (waited.as_millis() / 100) as usize;
+    let line = Line::from(vec![
+        Span::styled(SPINNER[turn % SPINNER.len()], Style::default().fg(t.warning.to_color())),
+        Span::styled(format!(" {}", said), t.muted()),
+    ]);
+
+    frame.render_widget(
+        Paragraph::new(line).alignment(Alignment::Center).block(block),
+        area,
+    );
+}
+
 /// Everything the form draws, worked out up front so a click can be matched
 /// against the very rows and buttons that end up on screen.
 pub struct FormLayout {
@@ -34,20 +82,42 @@ pub struct FormLayout {
 const SAVE: &str = " Save ";
 const CANCEL: &str = " Cancel ";
 
-pub fn form_layout(app: &AppService, body: Rect) -> FormLayout {
-    let fields = FormField::all();
+/// How many rows a field takes: its label, its value and a blank row under it,
+/// except a list, which gets a row for every line it holds.
+fn field_rows(app: &AppService, field: &FormField) -> usize {
+    match field.is_multiline() {
+        true => 2 + option_count(app),
+        false => 3,
+    }
+}
 
-    // two rows per field, a blank row between them, plus the footer block
-    let content_height = (fields.len() * 3) as u16 + if app.form_error.is_some() { 2 } else { 1 };
+fn option_count(app: &AppService) -> usize {
+    app.form_value(&FormField::Options).split('\n').count()
+}
+
+fn rows_above(app: &AppService, field: &FormField) -> usize {
+    FormField::all()
+        .iter()
+        .take_while(|above| *above != field)
+        .map(|above| field_rows(app, above))
+        .sum()
+}
+
+fn all_rows(app: &AppService) -> usize {
+    FormField::all().iter().map(|field| field_rows(app, field)).sum()
+}
+
+pub fn form_layout(app: &AppService, body: Rect) -> FormLayout {
+    let content_height = all_rows(app) as u16 + if app.form_error.is_some() { 2 } else { 1 };
     let area = centered(58, content_height + 3, body);
     let inner = form_block("").inner(area);
 
     // INFO: on a terminal too short for the whole form, scroll just enough to
     // keep the field being edited on screen
-    let active_row = fields.iter().position(|f| *f == app.form_field).unwrap_or(0) * 3 + 2;
+    let active_row = rows_above(app, &app.form_field) + field_rows(app, &app.form_field) - 1;
     let scroll = active_row.saturating_sub(inner.height as usize) as u16;
 
-    let footer = inner.y + (fields.len() * 3) as u16
+    let footer = inner.y + all_rows(app) as u16
         + u16::from(app.form_error.is_some())
         - scroll;
     let buttons = SAVE.len() as u16 + CANCEL.len() as u16 + 2;
@@ -79,8 +149,16 @@ pub fn field_at(app: &AppService, body: Rect, column: u16, row: u16) -> Option<F
         return None;
     }
 
-    let offset = row.checked_sub(layout.inner.y)? + layout.scroll;
-    FormField::all().get(offset as usize / 3).cloned()
+    let offset = (row.checked_sub(layout.inner.y)? + layout.scroll) as usize;
+
+    let mut top = 0;
+    for field in FormField::all() {
+        top += field_rows(app, &field);
+        if offset < top {
+            return Some(field);
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -114,6 +192,53 @@ fn form_block(title: &str) -> Block<'_> {
         .padding(Padding::new(2, 2, 1, 0))
 }
 
+/// The end of a value that is too long for its box, which is the end that is
+/// being typed: there is no way to move the cursor back through it.
+fn tail(value: &str, room: usize) -> String {
+    let count = value.chars().count();
+    if count <= room {
+        return value.to_string();
+    }
+
+    "…".chars().chain(value.chars().skip(count - room + 1)).collect()
+}
+
+/// The options, one to a line and numbered down the side the way they read in
+/// the file. Everything up to the first space is the name of the option, which
+/// is enough to colour a line that is only half typed.
+fn option_lines<'a>(app: &AppService, is_active: bool, width: usize) -> Vec<Line<'a>> {
+    let t = &app.theme;
+    let text = app.form_value(&FormField::Options);
+    let entries: Vec<&str> = text.split('\n').collect();
+    let gutter = entries.len().to_string().chars().count();
+
+    entries
+        .iter()
+        .enumerate()
+        .map(|(row, entry)| {
+            let last = row + 1 == entries.len();
+            let shown = tail(entry, width.saturating_sub(gutter + 7));
+            let (name, value) = match shown.split_once(' ') {
+                Some((name, value)) => (name.to_string(), format!(" {}", value)),
+                None => (shown, String::new()),
+            };
+
+            let mut spans = vec![
+                Span::styled(format!("  {:>1$}", row + 1, gutter), t.border()),
+                Span::styled(" │ ", t.border()),
+                Span::styled(name, Style::default().fg(t.warning.to_color())),
+                Span::styled(value, t.base()),
+            ];
+
+            if is_active && last {
+                spans.push(Span::styled("▎", Style::default().fg(t.input_cursor.to_color())));
+            }
+
+            Line::from(spans)
+        })
+        .collect()
+}
+
 pub fn draw_form(frame: &mut Frame, app: &AppService, title: &str, body: Rect) {
     let t = &app.theme;
     let fields = FormField::all();
@@ -143,7 +268,13 @@ pub fn draw_form(frame: &mut Frame, app: &AppService, title: &str, body: Rect) {
             Span::styled(format!("  {}", field.placeholder()), t.muted()),
         ]));
 
-        let value = app.form_value(field);
+        if field.is_multiline() {
+            lines.extend(option_lines(app, is_active, width));
+            lines.push(Line::from(""));
+            continue;
+        }
+
+        let value = tail(&app.form_value(field), width.saturating_sub(3));
         let cursor = if is_active { "▎" } else { "" };
         let input_style = if is_active { t.input() } else { t.muted() };
 
@@ -160,6 +291,8 @@ pub fn draw_form(frame: &mut Frame, app: &AppService, title: &str, body: Rect) {
 
     let hint = if app.is_completing() {
         "  ↑↓ pick a key   Enter use it"
+    } else if app.form_field.is_multiline() {
+        "  ↵ another line   Tab next field"
     } else {
         "  * required   Tab next field"
     };
@@ -525,7 +658,7 @@ fn choice<'a>(label: &'a str, is_picked: bool, t: &crate::models::Theme) -> Span
 }
 
 fn settings_area(body: Rect) -> Rect {
-    centered(56, 15, body)
+    centered(56, 16, body)
 }
 
 pub fn setting_at(body: Rect, column: u16, row: u16) -> Option<usize> {
@@ -558,7 +691,7 @@ pub fn draw_settings(frame: &mut Frame, app: &AppService, body: Rect) {
 
     // INFO: rows are placed by the same line numbers the mouse looks them up
     // by, so a click can never land a row away from what it points at
-    let mut lines = vec![Line::from(""); 12];
+    let mut lines = vec![Line::from(""); 13];
     lines[0] = Line::from(Span::styled("When you connect to a host", t.muted()));
     lines[5] = Line::from(Span::styled("Look", t.muted()));
 
@@ -571,6 +704,7 @@ pub fn draw_settings(frame: &mut Frame, app: &AppService, body: Rect) {
             Setting::Transparency => on_or_off(app.theme.transparent),
             Setting::TabEdges => on_or_off(app.tab_edges()),
             Setting::TabPanel => on_or_off(app.tab_panel()),
+            Setting::Connecting => on_or_off(app.wants_connecting_screen()),
         };
 
         let label = setting.label();

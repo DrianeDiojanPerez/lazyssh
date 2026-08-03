@@ -22,7 +22,6 @@ pub struct Frames {
     pub search: Rect,
     pub list: Rect,
     pub main: Rect,
-    pub status: Rect,
 }
 
 /// The sidebar is a fixed strip rather than a share of the width, so the
@@ -37,7 +36,6 @@ pub fn frames(app: &AppService, area: Rect) -> Frames {
             // connection does not shove the whole screen down a line
             Constraint::Length(if app.tab_panel() { 2 } else { 1 }),
             Constraint::Min(5),
-            Constraint::Length(1),
         ])
         .split(area);
 
@@ -66,8 +64,13 @@ pub fn frames(app: &AppService, area: Rect) -> Frames {
         search: sidebar[0],
         list: sidebar[1],
         main: columns[1],
-        status: rows[2],
     }
+}
+
+/// Whether a session is still being made, which is only worth saying while the
+/// setting for it is on.
+fn waiting_on(app: &AppService, session: &crate::services::Session) -> bool {
+    app.wants_connecting_screen() && session.is_connecting()
 }
 
 pub fn render(frame: &mut Frame, app: &AppService) {
@@ -78,21 +81,29 @@ pub fn render(frame: &mut Frame, app: &AppService) {
     let frames = frames(app, area);
 
     tabs::draw(frame, app, frames.tabs);
-    if frames.sidebar.is_some() {
+    if let Some(sidebar) = frames.sidebar {
         panels::draw_search_bar(frame, app, frames.search);
         panels::draw_host_list(frame, app, frames.list);
+        panels::draw_sidebar_edge(frame, app, sidebar);
     }
 
-    match app.active_session() {
+    // INFO: a session being made has nothing to paint yet, so the host it is
+    // being made to stays on screen and the waiting is said over the top
+    match app.active_session().filter(|session| !waiting_on(app, session)) {
         Some(session) => session::draw(frame, app, session, frames.main),
         None => panels::draw_detail_panel(frame, app, frames.main),
     }
 
-    panels::draw_status_bar(frame, app, frames.status);
-
     // INFO: toasts belong to the screen, not to the panels, so they hang in
     // the very corner rather than starting where the details do
     toasts::draw(frame, app, area);
+
+    if let Some(session) = app.active_session().filter(|session| waiting_on(app, session)) {
+        popups::draw_connecting(frame, app, &session.alias, session.waiting_for(), area);
+    }
+    if let Some(held) = &app.launching {
+        popups::draw_connecting(frame, app, &held.alias, held.waiting_for(), area);
+    }
 
     let body = frames.body;
     match &app.mode {
@@ -111,7 +122,6 @@ pub fn render(frame: &mut Frame, app: &AppService) {
 mod tests {
     use std::time::Duration;
 
-    use crossterm::event::KeyCode;
     use ratatui::layout::Rect;
 
     use crate::models::Toast;
@@ -161,15 +171,37 @@ mod tests {
         assert!(!screenshot::draw(&app, 80, 18).contains("Added"));
     }
 
-    /// The alias line of each card, as drawn: "│ server-07    :22 │".
-    fn alias_rows(screen: &str) -> Vec<(u16, usize)> {
+    /// The part of a row that belongs to the sidebar, so a search for an alias
+    /// or a lamp cannot wander into the pane beside it.
+    fn sidebar_row(screen: &str, list: Rect, row: u16) -> String {
         screen
             .lines()
-            .enumerate()
-            .filter_map(|(row, line)| {
-                let text = line.trim_start_matches(['│', '┃', ' ']);
+            .nth(row as usize)
+            .unwrap_or_default()
+            .chars()
+            .take(list.right() as usize)
+            .collect()
+    }
+
+    /// The row a host is written on, which is the first of the two it takes.
+    fn card_row(screen: &str, list: Rect, alias: &str) -> u16 {
+        (list.y..list.bottom())
+            .find(|row| {
+                sidebar_row(screen, list, *row)
+                    .trim_start_matches(['│', ' '])
+                    .starts_with(alias)
+            })
+            .unwrap_or_else(|| panic!("'{}' has no card:\n{}", alias, screen))
+    }
+
+    /// The alias line of each card, as drawn: "  server-07    :22  ●".
+    fn alias_rows(screen: &str, list: Rect) -> Vec<(u16, usize)> {
+        (list.y..list.bottom())
+            .filter_map(|row| {
+                let text = sidebar_row(screen, list, row);
+                let text = text.trim_start_matches(['│', ' ']);
                 let number = text.strip_prefix("server-")?.get(..2)?.parse::<usize>().ok()?;
-                (!text.contains('@')).then_some((row as u16, number - 1))
+                (!text.contains('@')).then_some((row, number - 1))
             })
             .collect()
     }
@@ -230,25 +262,6 @@ mod tests {
             .lines()
             .position(|line| line.contains(needle))
             .unwrap_or_else(|| panic!("'{}' is nowhere on screen:\n{}", needle, screen)) as u16
-    }
-
-    #[test]
-    fn the_status_bar_hints_are_buttons() {
-        let (app, _repo) = app_with(hosts(3));
-        let frames = super::frames(&app, Rect::new(0, 0, 80, 24));
-        let screen = screenshot::draw(&app, 80, 24);
-        let bar = frames.status.y;
-
-        for (hint, code) in [("a add", KeyCode::Char('a')), ("? help", KeyCode::Char('?'))] {
-            let column = column_of(&screen, bar, hint);
-            assert_eq!(
-                crate::ui::panels::hint_at(&app, frames.status, column, bar),
-                Some(code),
-                "clicking '{}' should press its key:\n{}",
-                hint,
-                screen
-            );
-        }
     }
 
     #[test]
@@ -386,23 +399,24 @@ mod tests {
 
         settle(|| !app.probes.is_working());
 
+        let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
         let screen = screenshot::draw(&app, 80, 24);
         let buffer = screenshot::buffer(&app, 80, 24);
         let lamp_on = |alias: &str| {
-            let row = row_of(&screen, alias);
-            let line = screen.lines().nth(row as usize).unwrap();
+            let row = card_row(&screen, list, alias);
+            let line = sidebar_row(&screen, list, row);
             let column = line.rfind('●').expect("the card has no lamp");
             buffer.get(line[..column].chars().count() as u16, row).style().fg
         };
 
         assert_eq!(
-            lamp_on("│ localbox"),
+            lamp_on("localbox"),
             Some(app.theme.success.to_color()),
             "a host that answered should be lit green:\n{}",
             screen
         );
         assert_eq!(
-            lamp_on("│ dead-host"),
+            lamp_on("dead-host"),
             Some(app.theme.error.to_color()),
             "a host that did not answer should be lit red:\n{}",
             screen
@@ -439,6 +453,93 @@ mod tests {
         assert!(
             screenshot::draw(&app, 100, 20).contains("server-01"),
             "the row should be showing the tab now"
+        );
+    }
+
+    #[test]
+    fn a_session_says_it_is_connecting_until_the_far_end_speaks() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.sessions.push(
+            crate::services::Session::spawn("server-01", "sleep", &["5".into()], 20, 40)
+                .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+
+        let waiting = screenshot::draw(&app, 100, 20);
+        assert!(
+            waiting.contains("Connecting to server-01.example.com…"),
+            "the wait should say what it is waiting for:\n{}",
+            waiting
+        );
+        assert!(
+            waiting.contains("› server-01"),
+            "the host being connected to should still be readable:\n{}",
+            waiting
+        );
+
+        // whether it is centred on the screen or on the pane only shows once
+        // the pane changes size under it
+        let column = column_of(&waiting, row_of(&waiting, "Connecting to"), "Connecting to");
+        app.toggle_sidebar();
+        let wider = screenshot::draw(&app, 100, 20);
+
+        assert_eq!(
+            column_of(&wider, row_of(&wider, "Connecting to"), "Connecting to"),
+            column,
+            "the wait should hold the middle of the screen:\n{}",
+            wider
+        );
+
+        std::thread::sleep(Duration::from_millis(150));
+        let turned = screenshot::draw(&app, 100, 20);
+        assert_ne!(
+            waiting, turned,
+            "the mark should be turning while the wait goes on:\n{}",
+            turned
+        );
+    }
+
+    /// A session that answers at once and then stays open, which is the shape
+    /// that would otherwise flicker past.
+    fn quick_session(app: &mut crate::services::AppService) {
+        app.sessions.push(
+            crate::services::Session::spawn(
+                "server-01",
+                "sh",
+                &["-c".into(), "echo ready; sleep 5".into()],
+                20,
+                40,
+            )
+            .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+    }
+
+    #[test]
+    fn the_wait_is_held_long_enough_to_be_seen() {
+        let (mut app, _repo) = app_with(hosts(3));
+        quick_session(&mut app);
+
+        settle(|| app.sessions[0].has_spoken());
+
+        let screen = screenshot::draw(&app, 100, 20);
+        assert!(
+            screen.contains("Connecting to"),
+            "the wait should hold even once the far end has answered:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn the_wait_gives_way_to_whatever_the_session_prints() {
+        let (mut app, _repo) = app_with(hosts(3));
+        quick_session(&mut app);
+
+        settle(|| screenshot::draw(&app, 100, 20).contains("ready"));
+
+        assert!(
+            !screenshot::draw(&app, 100, 20).contains("Connecting to"),
+            "the wait should be over once it has been held its time"
         );
     }
 
@@ -651,6 +752,27 @@ mod tests {
     }
 
     #[test]
+    fn the_wait_can_be_switched_off_in_the_settings() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.sessions.push(
+            crate::services::Session::spawn("server-01", "sleep", &["5".into()], 20, 40)
+                .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+
+        assert!(screenshot::draw(&app, 100, 20).contains("Connecting to"));
+
+        app.toggle_connecting_screen(&crate::test_support::StubThemeRepo);
+        let straight = screenshot::draw(&app, 100, 20);
+
+        assert!(
+            !straight.contains("Connecting to"),
+            "the wait should be gone once it is switched off:\n{}",
+            straight
+        );
+    }
+
+    #[test]
     fn the_settings_rows_answer_to_clicks() {
         let (mut app, _repo) = app_with(hosts(3));
         app.open_settings();
@@ -664,6 +786,7 @@ mod tests {
             ("Transparency", 4),
             ("Slanted tabs", 5),
             ("Tabs in a panel", 6),
+            ("Connecting screen", 7),
         ] {
             assert_eq!(
                 crate::ui::popups::setting_at(body, 40, row_of(&screen, label)),
@@ -673,21 +796,6 @@ mod tests {
                 screen
             );
         }
-    }
-
-    #[test]
-    fn the_bottom_bar_carries_what_the_header_used_to() {
-        let (app, _repo) = app_with(hosts(3));
-
-        let screen = screenshot::draw(&app, 100, 12);
-        let top = screen.lines().next().expect("a screen has rows");
-        let bottom = screen.lines().last().expect("a screen has rows");
-
-        assert!(top.contains("Tabs"), "the tab panel should be at the top now:\n{}", screen);
-        assert!(bottom.contains("NORMAL"), "the bar lost its mode:\n{}", screen);
-        assert!(bottom.contains("? help"), "the bar lost its hints:\n{}", screen);
-        assert!(bottom.contains(".ssh/config"), "the bar lost the config path:\n{}", screen);
-        assert!(bottom.contains("3 hosts"), "the bar lost the host count:\n{}", screen);
     }
 
     #[test]
@@ -724,7 +832,7 @@ mod tests {
 
         let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
         let screen = screenshot::draw(&app, 80, 24);
-        let drawn = alias_rows(&screen);
+        let drawn = alias_rows(&screen, list);
         assert!(drawn.len() > 2, "expected a panel full of cards:\n{}", screen);
 
         for (row, index) in drawn {
@@ -758,69 +866,120 @@ mod tests {
     }
 
     #[test]
-    fn the_selected_card_is_the_one_in_the_accent_colour() {
+    fn the_selected_card_is_the_one_in_a_box() {
         let (mut app, _repo) = app_with(hosts(3));
         app.move_cursor_down();
 
         let screen = screenshot::draw(&app, 80, 24);
         let buffer = screenshot::buffer(&app, 80, 24);
         let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
+        let row = card_row(&screen, list, "server-02");
 
-        let edge_of = |alias: &str| {
-            let row = row_of(&screen, alias) - 1;
-            buffer.get(list.x + 2, row).style().fg
-        };
+        assert!(
+            sidebar_row(&screen, list, row - 1).contains("╭──"),
+            "the selected card has no top edge:\n{}",
+            screen
+        );
+        assert!(
+            sidebar_row(&screen, list, row + 2).contains("╰──"),
+            "the selected card has no bottom edge:\n{}",
+            screen
+        );
+
+        let unselected = card_row(&screen, list, "server-01");
+        assert!(
+            sidebar_row(&screen, list, unselected - 1).trim().is_empty(),
+            "only the selected card gets a box:\n{}",
+            screen
+        );
 
         assert_eq!(
-            edge_of("│ server-02"),
+            buffer.get(list.x + 1, row - 1).style().fg,
             Some(app.theme.accent.to_color()),
-            "the selected card should be drawn in the accent colour:\n{}",
+            "the box should be drawn in the accent colour:\n{}",
             screen
         );
         assert_eq!(
-            edge_of("│ server-01"),
-            Some(app.theme.border.to_color()),
-            "an unselected card should keep the plain border:\n{}",
+            buffer.get(list.x + 3, row).style().bg,
+            buffer.get(list.x + 3, unselected).style().bg,
+            "the selected card should not be filled in:\n{}",
             screen
         );
     }
 
     #[test]
-    fn a_host_is_drawn_as_a_boxed_card() {
+    fn the_host_list_is_headed_by_a_rule_rather_than_boxed() {
         let (app, _repo) = app_with(hosts(3));
 
+        let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
         let screen = screenshot::draw(&app, 80, 24);
-        let lines: Vec<&str> = screen.lines().collect();
-        let top = lines
-            .iter()
-            .position(|line| line.contains("│ server-01"))
-            .unwrap_or_else(|| panic!("the card is missing:\n{}", screen));
+        let buffer = screenshot::buffer(&app, 80, 24);
 
-        assert!(lines[top - 1].contains("╭──"), "the card has no top edge:\n{}", screen);
+        assert!(!screen.contains("╭ Hosts"), "the panel should be gone:\n{}", screen);
+
+        let header = (list.y..list.bottom())
+            .find(|row| sidebar_row(&screen, list, *row).contains("Hosts 3"))
+            .unwrap_or_else(|| panic!("the header is missing:\n{}", screen));
+
         assert!(
-            lines[top + 1].contains("dperez@server-01.example.com"),
+            sidebar_row(&screen, list, header).contains("───"),
+            "the header should run out to the edge:\n{}",
+            screen
+        );
+        assert_eq!(
+            buffer.get(list.right(), list.y).symbol(),
+            "│",
+            "the sidebar has lost the line down its side:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn an_unselected_host_is_drawn_flat_on_two_lines() {
+        let (app, _repo) = app_with(hosts(3));
+
+        let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
+        let screen = screenshot::draw(&app, 80, 24);
+        let top = card_row(&screen, list, "server-02");
+
+        assert!(
+            !sidebar_row(&screen, list, top).contains('│'),
+            "an unselected card should have nothing drawn around it:\n{}",
+            screen
+        );
+        assert!(
+            sidebar_row(&screen, list, top + 1).contains("dperez@server-02.example.com"),
             "the card is missing its detail line:\n{}",
             screen
         );
-        assert!(lines[top + 2].contains("╰──"), "the card has no bottom edge:\n{}", screen);
+        assert!(
+            sidebar_row(&screen, list, top + 2).trim().is_empty(),
+            "the cards should have air between them:\n{}",
+            screen
+        );
     }
 
     #[test]
     fn a_custom_port_and_a_key_sit_beside_the_host() {
-        let mut list = hosts(2);
-        list[0].port = 2222;
-        list[0].identity_file = "~/.ssh/id_ed25519".into();
+        let mut hosts = hosts(2);
+        hosts[0].port = 2222;
+        hosts[0].identity_file = "~/.ssh/id_ed25519".into();
 
-        let (app, _repo) = app_with(list);
+        let (app, _repo) = app_with(hosts);
+        let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
         let screen = screenshot::draw(&app, 80, 24);
-        let lines: Vec<&str> = screen.lines().collect();
-        let top = lines
-            .iter()
-            .position(|line| line.contains("│ server-01"))
-            .unwrap_or_else(|| panic!("the card is missing:\n{}", screen));
+        let top = card_row(&screen, list, "server-01");
 
-        assert!(lines[top].contains(":2222"), "the port badge is missing:\n{}", screen);
-        assert!(lines[top + 1].contains("id_ed25519"), "the key is missing:\n{}", screen);
+        assert!(
+            sidebar_row(&screen, list, top).contains(":2222"),
+            "the port badge is missing:\n{}",
+            screen
+        );
+        assert!(
+            sidebar_row(&screen, list, top + 1).contains("id_ed25519"),
+            "the key is missing:\n{}",
+            screen
+        );
     }
 
     #[test]
@@ -838,9 +997,15 @@ mod tests {
         let (mut app, _repo) = app_with(hosts(40));
         app.jump_to_bottom();
 
+        let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
         let screen = screenshot::draw(&app, 80, 24);
 
-        assert!(screen.contains("│ server-40"), "selection scrolled out of view:\n{}", screen);
+        assert!(
+            (list.y..list.bottom())
+                .any(|row| sidebar_row(&screen, list, row).contains("server-40")),
+            "selection scrolled out of view:\n{}",
+            screen
+        );
     }
 
     #[test]
@@ -853,7 +1018,8 @@ mod tests {
         for label in ["Host Alias", "HostName", "Port", "User", "IdentityFile"] {
             assert!(screen.contains(label), "form is missing '{}':\n{}", label, screen);
         }
-        assert!(screen.contains("Esc cancel"), "form is missing its footer:\n{}", screen);
+        assert!(screen.contains("Tab next field"), "form is missing its footer:\n{}", screen);
+        assert!(screen.contains(" Cancel "), "form is missing its way out:\n{}", screen);
     }
 
     #[test]
@@ -865,6 +1031,47 @@ mod tests {
         let screen = screenshot::draw(&app, 40, 12);
 
         assert!(screen.contains("IdentityFile"), "active field is off screen:\n{}", screen);
+
+        app.form_field = crate::models::FormField::Options;
+        let last = screenshot::draw(&app, 40, 12);
+
+        assert!(last.contains("Options"), "the last field is out of reach:\n{}", last);
+    }
+
+    #[test]
+    fn the_options_are_edited_as_numbered_lines() {
+        let mut listed = host("server-01", 22);
+        listed.extra_options = vec![
+            ("HostKeyAlgorithms".into(), "ssh-rsa".into()),
+            ("SetEnv".into(), "TERM=xterm-256color".into()),
+        ];
+
+        let (mut app, _repo) = app_with(vec![listed]);
+        app.begin_edit();
+        app.focus_field(crate::models::FormField::Options);
+
+        let screen = screenshot::draw(&app, 84, 30);
+
+        assert!(
+            screen.contains("1 │ HostKeyAlgorithms ssh-rsa"),
+            "the first option is not numbered:\n{}",
+            screen
+        );
+        assert!(
+            screen.contains("2 │ SetEnv TERM=xterm-256color"),
+            "the second option is not numbered:\n{}",
+            screen
+        );
+        assert!(
+            screen.contains("↵ another line"),
+            "the footer should say what Enter does here:\n{}",
+            screen
+        );
+
+        app.form_new_line();
+        let grown = screenshot::draw(&app, 84, 30);
+
+        assert!(grown.contains("3 │"), "Enter should have opened a line:\n{}", grown);
     }
 
     #[test]
@@ -899,12 +1106,123 @@ mod tests {
     }
 
     #[test]
-    fn the_status_bar_keeps_the_way_out_on_a_narrow_terminal() {
-        let (mut app, _repo) = app_with(hosts(20));
+    fn the_detail_panel_reads_like_the_config_file() {
+        let (app, _repo) = app_with(hosts(3));
 
-        assert!(screenshot::draw(&app, 50, 18).contains("? help"));
+        let screen = screenshot::draw(&app, 100, 26);
 
-        app.begin_add();
-        assert!(screenshot::draw(&app, 50, 18).contains("Esc cancel"));
+        assert!(
+            screen.contains(".ssh/config › server-01"),
+            "the breadcrumb is missing:\n{}",
+            screen
+        );
+
+        for (number, text) in [
+            (1, "Host server-01"),
+            (2, "HostName server-01.example.com"),
+            (3, "Port 22"),
+            (4, "User dperez"),
+            (5, "IdentityFile (default)"),
+        ] {
+            assert!(
+                screen.contains(&format!("{} │ {}", number, text)),
+                "line {} should read '{}':\n{}",
+                number,
+                text,
+                screen
+            );
+        }
+
+        assert!(screen.contains("↵ connect"), "the panel lost its hints:\n{}", screen);
     }
+
+    #[test]
+    fn the_config_block_colours_the_keywords_by_where_they_came_from() {
+        let mut list = hosts(2);
+        list[0].extra_options = vec![("SetEnv".into(), "TERM=xterm-256color".into())];
+
+        let (app, _repo) = app_with(list);
+        let screen = screenshot::draw(&app, 100, 26);
+        let buffer = screenshot::buffer(&app, 100, 26);
+        let colour = |needle: &str| {
+            let row = row_of(&screen, needle);
+            buffer.get(column_of(&screen, row, needle), row).style().fg
+        };
+
+        assert_eq!(
+            colour("Host server-01"),
+            Some(app.theme.accent_secondary.to_color()),
+            "the block header should stand apart:\n{}",
+            screen
+        );
+        assert_eq!(
+            colour("HostName"),
+            Some(app.theme.accent.to_color()),
+            "a field the form knows should wear the accent:\n{}",
+            screen
+        );
+        assert_eq!(
+            colour("SetEnv"),
+            Some(app.theme.warning.to_color()),
+            "a hand written option should be called out:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn the_command_card_goes_away_without_taking_the_config_with_it() {
+        let (mut app, _repo) = app_with(hosts(3));
+
+        let shown = screenshot::draw(&app, 100, 26);
+        assert!(shown.contains("$ ssh server-01"), "the command card is missing:\n{}", shown);
+
+        app.toggle_command_preview();
+        let hidden = screenshot::draw(&app, 100, 26);
+
+        assert!(!hidden.contains("$ ssh server-01"), "the card should be gone:\n{}", hidden);
+        assert!(
+            hidden.contains("Host server-01"),
+            "the config block should have stayed:\n{}",
+            hidden
+        );
+    }
+
+    #[test]
+    fn the_command_card_says_what_the_probe_found() {
+        let (up, _listener) = reachable();
+        let (mut app, _repo) = app_with(vec![up, host("dead-host", 22)]);
+
+        settle(|| !app.probes.is_working());
+
+        let answered = screenshot::draw(&app, 100, 26);
+        assert!(
+            answered.contains("✓ reachable at dperez@127.0.0.1"),
+            "a host that answered should say so:\n{}",
+            answered
+        );
+
+        app.move_cursor_down();
+        let silent = screenshot::draw(&app, 100, 26);
+        assert!(
+            silent.contains("✗ no answer from dead-host.example.com:22"),
+            "a host that did not answer should say so:\n{}",
+            silent
+        );
+    }
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

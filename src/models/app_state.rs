@@ -41,11 +41,19 @@ pub enum FormField {
     Port,
     User,
     IdentityFile,
+    Options,
 }
 
 impl FormField {
     pub fn all() -> Vec<Self> {
-        vec![Self::Alias, Self::HostName, Self::Port, Self::User, Self::IdentityFile]
+        vec![
+            Self::Alias,
+            Self::HostName,
+            Self::Port,
+            Self::User,
+            Self::IdentityFile,
+            Self::Options,
+        ]
     }
 
     pub fn next(&self) -> Self {
@@ -54,17 +62,19 @@ impl FormField {
             Self::HostName => Self::Port,
             Self::Port => Self::User,
             Self::User => Self::IdentityFile,
-            Self::IdentityFile => Self::Alias,
+            Self::IdentityFile => Self::Options,
+            Self::Options => Self::Alias,
         }
     }
 
     pub fn previous(&self) -> Self {
         match self {
-            Self::Alias => Self::IdentityFile,
+            Self::Alias => Self::Options,
             Self::HostName => Self::Alias,
             Self::Port => Self::HostName,
             Self::User => Self::Port,
             Self::IdentityFile => Self::User,
+            Self::Options => Self::IdentityFile,
         }
     }
 
@@ -75,6 +85,7 @@ impl FormField {
             Self::Port => "Port",
             Self::User => "User",
             Self::IdentityFile => "IdentityFile",
+            Self::Options => "Options",
         }
     }
 
@@ -85,11 +96,18 @@ impl FormField {
             Self::Port => "default 22",
             Self::User => "login username",
             Self::IdentityFile => "path to key (optional)",
+            Self::Options => "one to a line",
         }
     }
 
     pub fn is_required(&self) -> bool {
         matches!(self, Self::Alias | Self::HostName)
+    }
+
+    /// Whether the field holds a list rather than a value, which is what makes
+    /// Enter add a line to it instead of saving the form.
+    pub fn is_multiline(&self) -> bool {
+        matches!(self, Self::Options)
     }
 
     pub fn accepts_char(&self, c: char) -> bool {
@@ -122,6 +140,7 @@ pub enum Setting {
     Transparency,
     TabEdges,
     TabPanel,
+    Connecting,
 }
 
 impl Setting {
@@ -131,6 +150,7 @@ impl Setting {
         rows.push(Self::Transparency);
         rows.push(Self::TabEdges);
         rows.push(Self::TabPanel);
+        rows.push(Self::Connecting);
         rows
     }
 
@@ -146,7 +166,7 @@ impl Setting {
     pub fn at_line(line: u16) -> Option<usize> {
         match line {
             1..=3 => Some(line as usize - 1),
-            6..=9 => Some(line as usize - 3),
+            6..=10 => Some(line as usize - 3),
             _ => None,
         }
     }
@@ -158,6 +178,7 @@ impl Setting {
             Self::Transparency => "Transparency",
             Self::TabEdges => "Slanted tabs",
             Self::TabPanel => "Tabs in a panel",
+            Self::Connecting => "Connecting screen",
         }
     }
 }

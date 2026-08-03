@@ -1,13 +1,27 @@
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::models::{
     Action, Focus, FormField, LaunchStyle, Mode, Setting, SshHost, Theme, ThemePreference, Toast,
 };
 use crate::repositories::{SshRepository, ThemeRepository};
-use crate::services::{Probes, Session};
+use crate::services::{Probes, Session, SETTLE};
 
 const MAX_TOASTS: usize = 3;
+
+/// A connection the screen is holding on before it hands the terminal over, so
+/// the wait is seen rather than guessed at.
+pub struct Launching {
+    pub alias: String,
+    args: Vec<String>,
+    since: Instant,
+}
+
+impl Launching {
+    pub fn waiting_for(&self) -> Duration {
+        self.since.elapsed()
+    }
+}
 
 pub struct AppService {
     preamble: String,
@@ -21,6 +35,7 @@ pub struct AppService {
     // INFO: the port is kept as text while the form is open so it can be
     // cleared and retyped, and is only parsed when the form is saved
     form_port: String,
+    form_options: String,
 
     pub theme: Theme,
     pub theme_preference: ThemePreference,
@@ -43,6 +58,7 @@ pub struct AppService {
     pub sidebar_open: bool,
     pub settings_cursor: usize,
     pub launch_cursor: usize,
+    pub launching: Option<Launching>,
     theme_from_settings: bool,
 }
 
@@ -77,6 +93,7 @@ impl AppService {
             form_draft: SshHost::empty(),
             form_field: FormField::Alias,
             form_port: String::new(),
+            form_options: String::new(),
 
             theme,
             theme_preference: preference,
@@ -99,6 +116,7 @@ impl AppService {
             sidebar_open: true,
             settings_cursor: 0,
             launch_cursor: 0,
+            launching: None,
             theme_from_settings: false,
         }
     }
@@ -133,6 +151,10 @@ impl AppService {
 
     pub fn host_at(&self, index: usize) -> Option<&SshHost> {
         self.hosts.get(index)
+    }
+
+    pub fn host_named(&self, alias: &str) -> Option<&SshHost> {
+        self.hosts.iter().find(|host| host.alias == alias)
     }
 
     pub fn move_cursor_up(&mut self) {
@@ -226,6 +248,7 @@ impl AppService {
         self.suggestion_cursor = None;
         self.form_draft = SshHost::empty();
         self.form_port = String::new();
+        self.form_options = String::new();
         self.form_field = FormField::Alias;
         self.mode = Mode::AddHost;
     }
@@ -235,6 +258,7 @@ impl AppService {
         if let Some(index) = self.selected_real_index() {
             self.form_draft = self.hosts[index].clone();
             self.form_port = self.form_draft.port.to_string();
+            self.form_options = write_options(&self.form_draft.extra_options);
             self.form_field = FormField::Alias;
             self.mode = Mode::EditHost(index);
         }
@@ -253,7 +277,7 @@ impl AppService {
             port: SshHost::DEFAULT_PORT,
             user: self.form_draft.user.trim().to_string(),
             identity_file: self.form_draft.identity_file.trim().to_string(),
-            extra_options: self.form_draft.extra_options.clone(),
+            extra_options: Vec::new(),
         };
 
         if !draft.is_valid() {
@@ -267,6 +291,7 @@ impl AppService {
         }
 
         draft.port = self.parse_form_port()?;
+        draft.extra_options = parse_options(&self.form_options)?;
         Ok(draft)
     }
 
@@ -397,10 +422,51 @@ impl AppService {
     }
 
     pub fn launch_full_screen(&mut self) {
-        if let Some(host) = self.selected_host() {
-            self.pending_action = Action::LaunchSsh(host.as_ssh_args());
-        }
         self.mode = Mode::Normal;
+
+        let Some(host) = self.selected_host() else {
+            return;
+        };
+        let args = host.as_ssh_args();
+
+        if !self.wants_connecting_screen() {
+            self.pending_action = Action::LaunchSsh(args);
+            return;
+        }
+
+        self.launching = Some(Launching {
+            alias: host.alias.clone(),
+            args,
+            since: Instant::now(),
+        });
+    }
+
+    pub fn is_launching(&self) -> bool {
+        self.launching.is_some()
+    }
+
+    /// Hands the terminal over once the wait has been up long enough to read.
+    /// Until then the screen stays where it is with the wait over the top.
+    pub fn advance_launch(&mut self) {
+        if self.launching.as_ref().is_some_and(|held| held.waiting_for() < SETTLE) {
+            return;
+        }
+
+        if let Some(held) = self.launching.take() {
+            self.pending_action = Action::LaunchSsh(held.args);
+        }
+    }
+
+    pub fn wants_connecting_screen(&self) -> bool {
+        self.theme_preference.connecting
+    }
+
+    pub fn toggle_connecting_screen(&mut self, theme_repo: &dyn ThemeRepository) {
+        self.theme_preference.connecting = !self.theme_preference.connecting;
+        theme_repo.save_preference(&self.theme_preference);
+
+        let label = if self.wants_connecting_screen() { "on" } else { "off" };
+        self.toast(Toast::success(format!("Connecting screen: {}", label)));
     }
 
     pub fn open_settings(&mut self) {
@@ -425,6 +491,7 @@ impl AppService {
             Some(Setting::Transparency) => self.toggle_transparency(theme_repo),
             Some(Setting::TabEdges) => self.toggle_tab_edges(theme_repo),
             Some(Setting::TabPanel) => self.toggle_tab_panel(theme_repo),
+            Some(Setting::Connecting) => self.toggle_connecting_screen(theme_repo),
             Some(Setting::Theme) => {
                 // INFO: the picker is opened from here, so Esc out of it comes
                 // back here rather than dropping the whole panel
@@ -665,6 +732,13 @@ impl AppService {
         self.write_form_field(value);
     }
 
+    pub fn form_new_line(&mut self) {
+        self.suggestion_cursor = None;
+        let mut value = self.read_form_field();
+        value.push('\n');
+        self.write_form_field(value);
+    }
+
     pub fn form_delete_char(&mut self) {
         self.suggestion_cursor = None;
         let mut value = self.read_form_field();
@@ -679,6 +753,7 @@ impl AppService {
             FormField::Port => self.form_port.clone(),
             FormField::User => self.form_draft.user.clone(),
             FormField::IdentityFile => self.form_draft.identity_file.clone(),
+            FormField::Options => self.form_options.clone(),
         }
     }
 
@@ -693,6 +768,7 @@ impl AppService {
             FormField::Port => self.form_port = value,
             FormField::User => self.form_draft.user = value,
             FormField::IdentityFile => self.form_draft.identity_file = value,
+            FormField::Options => self.form_options = value,
         }
     }
 
@@ -848,6 +924,36 @@ impl AppService {
     }
 }
 
+/// The options the form has no field of its own for, written the way they read
+/// in the file: a name, a space and its value, one to a line.
+fn write_options(options: &[(String, String)]) -> String {
+    options
+        .iter()
+        .map(|(name, value)| format!("{} {}", name, value))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn parse_options(text: &str) -> Result<Vec<(String, String)>, String> {
+    let mut parsed = Vec::new();
+
+    for entry in text.lines() {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+
+        match entry.split_once(char::is_whitespace) {
+            Some((name, value)) if !value.trim().is_empty() => {
+                parsed.push((name.to_string(), value.trim().to_string()))
+            }
+            _ => return Err(format!("'{}' needs a name and a value", entry)),
+        }
+    }
+
+    Ok(parsed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -858,6 +964,99 @@ mod tests {
         for c in text.chars() {
             app.form_type_char(c);
         }
+    }
+
+    #[test]
+    fn an_option_the_form_has_no_field_for_can_still_be_typed_in() {
+        let (mut app, repo) = app_with(vec![]);
+
+        app.begin_add();
+        type_into(&mut app, FormField::Alias, "box");
+        type_into(&mut app, FormField::HostName, "10.0.0.5");
+        type_into(&mut app, FormField::Options, "SetEnv TERM=xterm-256color");
+        app.commit_add(&repo);
+
+        assert_eq!(
+            app.host_at(0).map(|h| h.extra_options.clone()),
+            Some(vec![("SetEnv".into(), "TERM=xterm-256color".into())])
+        );
+    }
+
+    #[test]
+    fn the_options_a_host_already_had_come_back_up_for_editing() {
+        let mut box_host = host("box", 22);
+        box_host.extra_options = vec![
+            ("HostKeyAlgorithms".into(), "ssh-rsa".into()),
+            ("SetEnv".into(), "TERM=xterm-256color".into()),
+        ];
+
+        let (mut app, repo) = app_with(vec![box_host]);
+        app.begin_edit();
+
+        assert_eq!(
+            app.form_value(&FormField::Options),
+            "HostKeyAlgorithms ssh-rsa\nSetEnv TERM=xterm-256color"
+        );
+
+        app.form_field = FormField::Options;
+        app.form_new_line();
+        type_into(&mut app, FormField::Options, "Compression yes");
+        app.commit_edit(0, &repo);
+
+        assert_eq!(
+            app.host_at(0).map(|h| h.extra_options.len()),
+            Some(3),
+            "the option typed on a new line should have been kept"
+        );
+    }
+
+    #[test]
+    fn a_semicolon_in_an_option_stays_part_of_its_value() {
+        let (mut app, repo) = app_with(vec![]);
+
+        app.begin_add();
+        type_into(&mut app, FormField::Alias, "box");
+        type_into(&mut app, FormField::HostName, "10.0.0.5");
+        type_into(&mut app, FormField::Options, "ProxyCommand ssh -W %h:%p jump; true");
+        app.commit_add(&repo);
+
+        assert_eq!(
+            app.host_at(0).map(|h| h.extra_options.clone()),
+            Some(vec![("ProxyCommand".into(), "ssh -W %h:%p jump; true".into())])
+        );
+    }
+
+    #[test]
+    fn an_option_with_nothing_but_a_name_is_refused() {
+        let (mut app, repo) = app_with(vec![]);
+
+        app.begin_add();
+        type_into(&mut app, FormField::Alias, "box");
+        type_into(&mut app, FormField::HostName, "10.0.0.5");
+        type_into(&mut app, FormField::Options, "Compression");
+        app.commit_add(&repo);
+
+        assert_eq!(app.host_count(), 0, "the host should not have been saved");
+        assert_eq!(
+            app.form_error.as_deref(),
+            Some("'Compression' needs a name and a value")
+        );
+    }
+
+    #[test]
+    fn clearing_the_options_field_takes_the_options_off_the_host() {
+        let mut box_host = host("box", 22);
+        box_host.extra_options = vec![("Compression".into(), "yes".into())];
+
+        let (mut app, repo) = app_with(vec![box_host]);
+        app.begin_edit();
+        app.form_field = FormField::Options;
+        while !app.form_value(&FormField::Options).is_empty() {
+            app.form_delete_char();
+        }
+        app.commit_edit(0, &repo);
+
+        assert_eq!(app.host_at(0).map(|h| h.extra_options.is_empty()), Some(true));
     }
 
     #[test]
@@ -960,17 +1159,45 @@ mod tests {
     }
 
     #[test]
-    fn the_old_way_hands_the_whole_terminal_over() {
+    fn the_old_way_says_it_is_connecting_before_it_hands_the_terminal_over() {
         let (mut app, _repo) = app_with(vec![host("box", 22)]);
         app.choose_launch_style(LaunchStyle::FullScreen, &crate::test_support::StubThemeRepo);
 
         app.request_connection(20, 40);
 
+        assert!(app.is_launching(), "the wait should come first");
+        assert!(
+            matches!(app.take_action(), Action::Continue),
+            "the terminal should not be handed over while the wait is up"
+        );
+
+        std::thread::sleep(SETTLE);
+        app.advance_launch();
+
         assert!(
             matches!(app.take_action(), Action::LaunchSsh(args) if args.contains(&"box".to_string())),
-            "full screen should hand ssh the terminal"
+            "full screen should hand ssh the terminal once the wait is over"
         );
+        assert!(!app.is_launching());
         assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn with_the_connecting_screen_off_the_terminal_is_handed_over_at_once() {
+        let (mut app, _repo) = app_with(vec![host("box", 22)]);
+        let themes = crate::test_support::StubThemeRepo;
+
+        app.choose_launch_style(LaunchStyle::FullScreen, &themes);
+        app.toggle_connecting_screen(&themes);
+        assert!(!app.wants_connecting_screen());
+
+        app.request_connection(20, 40);
+
+        assert!(!app.is_launching(), "there should be nothing to wait for");
+        assert!(
+            matches!(app.take_action(), Action::LaunchSsh(args) if args.contains(&"box".to_string())),
+            "full screen should go straight there"
+        );
     }
 
     #[test]

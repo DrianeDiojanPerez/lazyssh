@@ -4,4 +4,4 @@ pub mod session;
 
 pub use app_service::AppService;
 pub use probe::Probes;
-pub use session::Session;
+pub use session::{Session, SETTLE};
