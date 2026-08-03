@@ -192,13 +192,6 @@ fn on_mouse(
         _ => return Ok(()),
     }
 
-    // INFO: the hints are a row of buttons in every mode, so they are offered
-    // the click before whatever mode is on screen
-    if let Some(code) = panels::hint_at(app, frames.status, column, row) {
-        dispatch_key(app, KeyEvent::new(code, KeyModifiers::NONE), ssh_repo, theme_repo);
-        return Ok(());
-    }
-
     match tabs::tab_at(app, frames.tabs, column, row) {
         Some(tabs::TabHit::Select(index)) => return ok(app.select_tab(index)),
         Some(tabs::TabHit::Close(index)) => return ok(app.close_tab(index)),
