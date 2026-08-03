@@ -13,8 +13,6 @@ pub enum Mode {
     Help,
 }
 
-/// How a connection should be opened: in a tab beside the hosts, in the whole
-/// terminal the old way, or by asking each time.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum LaunchStyle {
     Ask,
@@ -106,11 +104,9 @@ impl FormField {
 pub enum Action {
     Continue,
     Quit,
-    /// Leave the interface to ssh, and come back when it is done.
     LaunchSsh(Vec<String>),
 }
 
-/// Whether a host answered on its ssh port the last time it was tried.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Reachability {
     Unknown,
@@ -119,7 +115,6 @@ pub enum Reachability {
     Offline,
 }
 
-/// A line in the settings panel that can actually be acted on.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Setting {
     Launch(LaunchStyle),
@@ -167,7 +162,6 @@ impl Setting {
     }
 }
 
-/// Which half of the screen the keyboard is talking to.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Focus {
     Sidebar,

@@ -69,8 +69,6 @@ impl Theme {
             .add_modifier(Modifier::BOLD)
     }
 
-    /// A badge: the theme background written on top of a solid colour, so a
-    /// short label reads as a filled chip rather than as more text.
     pub fn pill(&self, color: &Rgb) -> Style {
         Style::default()
             .fg(self.bg.to_color())
@@ -92,16 +90,12 @@ impl Theme {
             .bg(if self.transparent { Color::Reset } else { self.status_bar_bg.to_color() })
     }
 
-    /// A chip that sits back: it keeps a surface of its own, so it still reads
-    /// as something you can pick, without competing with the one in front.
     pub fn surface(&self) -> Style {
         Style::default()
             .fg(self.fg.to_color())
             .bg(self.input_bg.to_color())
     }
 
-    /// The lamp on a card that answered, which wants the success colour
-    /// without the background the other styles carry.
     pub fn success_dot(&self) -> Style {
         Style::default().fg(self.success.to_color())
     }
@@ -135,7 +129,6 @@ impl Theme {
         self.error().add_modifier(Modifier::BOLD)
     }
 
-
     pub fn bold_accent_secondary(&self) -> Style {
         self.accent_secondary().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
     }
@@ -149,10 +142,8 @@ pub struct ThemePreference {
     // build still loads and simply gets the default
     #[serde(default = "ask_first")]
     pub launch_style: LaunchStyle,
-    /// Tabs are plain blocks unless this is turned on.
     #[serde(default)]
     pub tab_edges: bool,
-    /// Tabs live in a panel of their own unless this is turned off.
     #[serde(default = "yes")]
     pub tab_panel: bool,
 }

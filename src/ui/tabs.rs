@@ -16,7 +16,6 @@ const CLOSE: &str = "×";
 const TAB_LEFT: &str = "\u{e0be}";
 const TAB_RIGHT: &str = "\u{e0b8}";
 
-/// The label the row opens with when the tabs are not in a panel of their own.
 const BADGE: &str = " tabs ";
 
 fn badge_width(app: &AppService) -> u16 {
@@ -29,7 +28,6 @@ fn label_row(app: &AppService, area: Rect) -> u16 {
     area.y + u16::from(app.tab_panel())
 }
 
-/// The panel they sit in, titled the way the others are.
 fn block(app: &AppService) -> Block<'static> {
     let t = &app.theme;
 
@@ -43,7 +41,6 @@ fn block(app: &AppService) -> Block<'static> {
         .style(t.base())
 }
 
-/// What a click on the tab bar meant.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TabHit {
     Select(usize),
@@ -54,8 +51,6 @@ pub enum TabHit {
 /// the mouse both read this, so a tab is always where it was drawn.
 fn layout(app: &AppService) -> Vec<(u16, String, usize)> {
     let mut placed = Vec::new();
-    // INFO: the row starts hard against the left edge, so nothing is indented
-    // away from the corner of the screen
     // the border and the padding it carries, or the label in its place
     let mut x = match app.tab_panel() {
         true => 2,
@@ -101,10 +96,6 @@ fn width_of(app: &AppService, label: &str) -> u16 {
     label.chars().count() as u16 + u16::from(app.tab_edges()) * 2
 }
 
-/// Tabs are cards of their own: the one you are looking at is filled in and
-/// the rest are outlined, the same way the buttons in the popups are.
-/// Tabs are pills of their own: the one you are looking at is filled in and
-/// the rest sit back on a quieter surface.
 pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
     let edges = app.tab_edges();
@@ -133,8 +124,6 @@ pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     }
 }
 
-/// The row's label, slanted on its right the same way a tab is, and left as a
-/// plain block when the tabs are.
 fn label_pill<'a>(
     label: &str,
     colour: ratatui::style::Color,

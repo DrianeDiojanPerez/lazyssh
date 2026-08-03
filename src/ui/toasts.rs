@@ -16,8 +16,6 @@ const CHROME: u16 = 4;
 const MESSAGE_ROWS: usize = 2;
 const GAP: u16 = 1;
 
-/// Toasts float in the very top right corner of the screen, newest underneath,
-/// each one sliding out of the right edge and back into it when its time is up.
 pub fn draw(frame: &mut Frame, app: &AppService, area: Rect) {
     let mut top = area.y;
 
@@ -73,8 +71,6 @@ fn draw_one(
     let rect = Rect { x: area.right().saturating_sub(width), y: top, width, height };
     frame.render_widget(Clear, rect);
 
-    // INFO: the whole frame takes the level colour, which is what makes a
-    // toast readable as good or bad news before a word of it is read
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -116,8 +112,6 @@ fn stamp(toast: &Toast, heading: &str, text_width: usize) -> String {
     format!("{:>width$}", toast.at, width = room)
 }
 
-/// Splits the title row off from the message, tying into the side borders and
-/// wearing their colour so the toast reads as one piece.
 fn draw_divider(frame: &mut Frame, rect: Rect, color: ratatui::style::Color) {
     let style = Style::default().fg(color);
     let y = rect.y + 2;
@@ -147,8 +141,6 @@ fn draw_life_bar(frame: &mut Frame, toast: &Toast, rect: Rect, color: ratatui::s
     }
 }
 
-/// Breaks a message over at most `rows` lines on word boundaries, so a long
-/// error reads as a sentence instead of being cut off at the border.
 fn wrap(text: &str, width: usize, rows: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
 
@@ -167,7 +159,6 @@ fn wrap(text: &str, width: usize, rows: usize) -> Vec<String> {
         }
     }
 
-    // whatever is left over is squeezed onto the last line it can have
     if let Some(last) = lines.last_mut() {
         *last = ellipsize(last, width);
     }

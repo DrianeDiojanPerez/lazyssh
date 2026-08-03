@@ -13,11 +13,8 @@ use crate::ui::{panels, popups, renderer, tabs};
 /// animate, and blocks outright when there is nothing left to move.
 const FRAME: Duration = Duration::from_millis(33);
 
-/// Two clicks on the same spot inside this window count as a double click.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
-/// Remembers the last click, which is the only way to tell a double click from
-/// two single ones.
 #[derive(Default)]
 pub struct Clicks {
     last: Option<(u16, u16, Instant)>,
@@ -44,8 +41,6 @@ pub fn handle_next_event(
     theme_repo: &dyn ThemeRepository,
     clicks: &mut Clicks,
 ) -> std::io::Result<()> {
-    // INFO: a live session paints without anyone touching the keyboard, so the
-    // wait ends every frame while one is open
     if (app.has_toasts() || app.has_live_session() || app.probes.is_working())
         && !event::poll(FRAME)?
     {
@@ -53,8 +48,6 @@ pub fn handle_next_event(
     }
 
     match event::read()? {
-        // INFO: a focused session owns the keyboard, so only the key that
-        // brings the sidebar back is read here before the rest is forwarded
         Event::Key(key) if app.is_session_focused() && app.mode == Mode::Normal => {
             if is_sidebar_combo(key) {
                 app.toggle_sidebar();
@@ -71,7 +64,6 @@ pub fn handle_next_event(
     Ok(())
 }
 
-/// Turns a key into the bytes a terminal would have sent for it.
 fn encode(key: KeyEvent) -> Option<Vec<u8>> {
     let alt = key.modifiers.contains(KeyModifiers::ALT);
     let control = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -132,8 +124,6 @@ fn dispatch_key(
     }
 }
 
-/// The one question asked when a connection is made and the settings say to
-/// ask: a tab, or the whole terminal.
 fn on_choose_launch(app: &mut AppService, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => app.cancel_mode(),
@@ -144,7 +134,6 @@ fn on_choose_launch(app: &mut AppService, key: KeyEvent) {
         KeyCode::Char('f') | KeyCode::Char('F') => app.launch_full_screen(),
         KeyCode::Char('t') | KeyCode::Char('T') => open_session(app),
 
-        // INFO: Enter takes whichever answer the arrows have landed on
         KeyCode::Enter if app.launch_cursor == 0 => open_session(app),
         KeyCode::Enter => app.launch_full_screen(),
 
@@ -162,8 +151,6 @@ fn on_settings(app: &mut AppService, key: KeyEvent, theme_repo: &dyn ThemeReposi
     }
 }
 
-/// Everything on screen answers to the mouse: the wheel drives whichever list
-/// is in front, and a click acts on the row, field or button underneath it.
 fn on_mouse(
     app: &mut AppService,
     mouse: MouseEvent,
@@ -218,7 +205,6 @@ fn on_mouse(
         None => {}
     }
 
-    // clicking a pane is how the keyboard moves between them
     if app.mode == Mode::Normal && hits(frames.main, column, row) {
         return ok(app.focus_session());
     }
@@ -306,7 +292,6 @@ fn on_normal(
 
     match key.code {
         KeyCode::Char('q') => app.request_quit(),
-        // INFO: an active filter is the first thing Esc should undo
         KeyCode::Esc if app.has_filter() => app.clear_filter(),
         KeyCode::Esc => app.request_quit(),
 
@@ -454,7 +439,6 @@ fn is_shortcut(key: KeyEvent) -> bool {
     key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
 }
 
-/// Ctrl-B swings the sidebar in and out, and the keyboard follows it.
 fn is_sidebar_combo(key: KeyEvent) -> bool {
     key.code == KeyCode::Char('b') && key.modifiers.contains(KeyModifiers::CONTROL)
 }

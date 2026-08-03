@@ -8,8 +8,6 @@ use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySyste
 /// looks like this, so it doubles as "it has not said yet".
 const UNFINISHED: i32 = i32::MIN;
 
-/// A live ssh session: the process on one end of a pseudo terminal, and the
-/// screen it has painted on the other.
 pub struct Session {
     pub alias: String,
     pub screen: Arc<Mutex<vt100::Parser>>,
@@ -22,8 +20,6 @@ pub struct Session {
 }
 
 impl Session {
-    /// Starts ssh on a pseudo terminal of the given size. The output is read on
-    /// a thread of its own so a busy session never holds up the interface.
     pub fn open(alias: &str, args: &[String], rows: u16, columns: u16) -> Result<Self, String> {
         Self::spawn(alias, "ssh", args, rows, columns)
     }
@@ -113,7 +109,6 @@ impl Session {
         self.running.load(Ordering::SeqCst)
     }
 
-    /// How the process ended, once it has.
     pub fn exit_code(&self) -> Option<i32> {
         match self.exit.load(Ordering::SeqCst) {
             UNFINISHED => None,
@@ -129,7 +124,6 @@ impl Session {
         matches!(self.exit_code(), Some(255) | Some(-1))
     }
 
-    /// A session that is over and has nothing left to explain.
     pub fn is_finished(&self) -> bool {
         !self.is_running() && !self.ssh_failed()
     }
@@ -139,8 +133,6 @@ impl Session {
         let _ = self.writer.flush();
     }
 
-    /// Keeps the session the same size as the pane it is drawn in. Doing
-    /// nothing when the size has not changed keeps it off the hot path.
     pub fn resize(&mut self, rows: u16, columns: u16) {
         let (rows, columns) = (rows.max(1), columns.max(1));
         if rows == self.rows && columns == self.columns {
@@ -218,7 +210,6 @@ mod tests {
         assert!(!session.is_finished());
     }
 
-    /// A session that stopped with the given code, the way ssh reports one.
     fn ending_with(code: i32) -> Session {
         let args = ["-c".to_string(), format!("exit {}", code)];
         let session = Session::spawn("test", "sh", &args, 10, 40).expect("the pty should start");

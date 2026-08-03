@@ -25,8 +25,6 @@ pub fn draw_search_bar(frame: &mut Frame, app: &AppService, area: Rect) {
         .padding(Padding::new(1, 1, 0, 0))
         .style(t.base());
 
-    // INFO: the box is always on screen, so it says what it is for when it is
-    // empty and only carries a cursor while it has the keyboard
     let mut spans = vec![Span::styled("/ ", t.accent())];
 
     if app.search_query.is_empty() {
@@ -96,8 +94,6 @@ pub fn cards(app: &AppService, area: Rect) -> Cards {
     }
 }
 
-/// The host under a point, for a click. None when the point is past the last
-/// card or outside the panel altogether.
 pub fn host_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<usize> {
     if column < area.x || column >= area.right() || row < area.y || row >= area.bottom() {
         return None;
@@ -169,8 +165,6 @@ fn key_name(host: &SshHost) -> &str {
     host.identity_file.rsplit('/').next().unwrap_or("")
 }
 
-/// One host drawn as its own card. The box holds the text rather than
-/// carrying any of it, so the list reads as a stack of cards.
 fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -> Vec<Line<'a>> {
     let t = &app.theme;
 
@@ -197,8 +191,6 @@ fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -
         .then(|| Span::styled(format!(" :{} ", host.port), t.pill(&t.accent_secondary)));
     let key = key_name(host);
 
-    // INFO: the lamp sits in the top right of the card, where a status light
-    // belongs, and says whether the host answered on its ssh port
     let (lamp, lamp_style) = match app.probes.status(&host.alias) {
         Reachability::Online => ("●", t.success_dot()),
         Reachability::Offline => ("●", t.error()),
@@ -407,8 +399,6 @@ pub fn draw_status_bar(frame: &mut Frame, app: &AppService, area: Rect) {
     spans.pop();
     used = used.saturating_sub(3);
 
-    // INFO: what the header used to say now sits at the far end of this bar,
-    // which is the only bar there is
     let gap = (area.width as usize).saturating_sub(used + meta_width);
     spans.push(Span::styled(" ".repeat(gap), t.status_bar()));
     spans.extend(meta);
@@ -449,13 +439,11 @@ fn meta_spans<'a>(app: &AppService, width: u16) -> Vec<Span<'a>> {
     spans
 }
 
-/// The hints get whatever the meta on the right hand end does not want.
 fn hint_room(app: &AppService, width: u16) -> u16 {
     let meta: usize = meta_spans(app, width).iter().map(|s| s.content.chars().count()).sum();
     width.saturating_sub(meta as u16 + 1)
 }
 
-/// The hint under a point, as the key that would have done the same thing.
 pub fn hint_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<KeyCode> {
     if row != area.y {
         return None;
@@ -517,7 +505,6 @@ fn mode_chip<'a>(app: &AppService) -> Span<'a> {
     Span::styled(format!(" {} ", label), app.theme.selected())
 }
 
-/// The one hint that always stays visible: how to leave where you are.
 fn escape_hint(app: &AppService) -> (&'static str, &'static str, KeyCode) {
     if app.is_session_focused() {
         return ("C-b", "sidebar", KeyCode::Null);

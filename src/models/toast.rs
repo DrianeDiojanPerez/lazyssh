@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use chrono::Local;
 
-/// How long a toast takes to slide in, and to slide back out again.
 const ENTER: Duration = Duration::from_millis(200);
 const LEAVE: Duration = Duration::from_millis(260);
 
@@ -28,7 +27,6 @@ impl ToastKind {
 pub struct Toast {
     pub message: String,
     pub kind: ToastKind,
-    /// The wall clock time it was raised, shown on the title row.
     pub at: String,
     age: Duration,
 }
@@ -76,7 +74,6 @@ impl Toast {
         ease_out(entering.min(leaving))
     }
 
-    /// The share of its life still to run, drawn as the bar underneath.
     pub fn remaining(&self) -> f32 {
         1.0 - ratio(self.age, self.lifetime())
     }
