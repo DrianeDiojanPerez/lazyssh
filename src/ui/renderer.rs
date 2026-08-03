@@ -915,6 +915,42 @@ mod tests {
     }
 
     #[test]
+    fn the_options_are_edited_as_numbered_lines() {
+        let mut listed = host("server-01", 22);
+        listed.extra_options = vec![
+            ("HostKeyAlgorithms".into(), "ssh-rsa".into()),
+            ("SetEnv".into(), "TERM=xterm-256color".into()),
+        ];
+
+        let (mut app, _repo) = app_with(vec![listed]);
+        app.begin_edit();
+        app.focus_field(crate::models::FormField::Options);
+
+        let screen = screenshot::draw(&app, 84, 30);
+
+        assert!(
+            screen.contains("1 │ HostKeyAlgorithms ssh-rsa"),
+            "the first option is not numbered:\n{}",
+            screen
+        );
+        assert!(
+            screen.contains("2 │ SetEnv TERM=xterm-256color"),
+            "the second option is not numbered:\n{}",
+            screen
+        );
+        assert!(
+            screen.contains("↵ another line"),
+            "the footer should say what Enter does here:\n{}",
+            screen
+        );
+
+        app.form_new_line();
+        let grown = screenshot::draw(&app, 84, 30);
+
+        assert!(grown.contains("3 │"), "Enter should have opened a line:\n{}", grown);
+    }
+
+    #[test]
     fn the_help_fits_a_small_terminal() {
         let (mut app, _repo) = app_with(hosts(3));
         app.open_help();
@@ -1051,6 +1087,7 @@ mod tests {
     }
 
 }
+
 
 
 
