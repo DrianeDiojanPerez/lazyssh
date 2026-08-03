@@ -103,8 +103,6 @@ fn update() -> io::Result<()> {
     }
 }
 
-/// There is no installer to run on Windows, so this says where to go instead
-/// of leaving the flag looking broken.
 #[cfg(not(unix))]
 fn update() -> io::Result<()> {
     println!("lazyssh v{}\n", env!("CARGO_PKG_VERSION"));
@@ -120,8 +118,6 @@ fn give_up(reason: &str) -> ! {
     std::process::exit(1);
 }
 
-/// The old way of connecting: the interface steps aside, ssh gets the terminal
-/// to itself, and lazyssh comes back when it is done.
 fn run_in_the_whole_terminal(args: Vec<String>) {
     let display = args.join(" ");
     println!("\x1b[1;36m══ ssh {} ══\x1b[0m\n", display);
@@ -165,8 +161,6 @@ fn run_tui(
     let mut clicks = input::Clicks::default();
 
     let action = loop {
-        // INFO: a session that has logged out is closed before the frame it
-        // would have been drawn in, so the tab goes as soon as it is done
         app.reap_finished_sessions();
 
         // INFO: the pty is told the size of the pane before it is drawn, so
