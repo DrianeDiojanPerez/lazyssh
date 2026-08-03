@@ -10,8 +10,6 @@ pub trait SshRepository {
     fn load_all(&self) -> (String, Vec<SshHost>);
     fn save_all(&self, preamble: &str, hosts: &[SshHost]) -> Result<PathBuf, String>;
     fn config_path(&self) -> PathBuf;
-    /// The private keys sitting next to the config, offered as completions for
-    /// the IdentityFile field.
     fn identity_files(&self) -> Vec<String>;
 }
 
