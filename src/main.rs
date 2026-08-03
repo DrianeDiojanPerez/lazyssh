@@ -7,8 +7,9 @@ mod test_support;
 mod ui;
 
 use std::io;
+use std::io::Write;
 use std::process::Command;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
@@ -118,9 +119,36 @@ fn give_up(reason: &str) -> ! {
     std::process::exit(1);
 }
 
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// The same length of wait a tab shows before it gives way to the session.
+const SETTLE: Duration = Duration::from_secs(2);
+
+fn mark(waited: Duration) -> &'static str {
+    SPINNER[(waited.as_millis() / 100) as usize % SPINNER.len()]
+}
+
+/// The wait a tab says in a modal, said here on a line of its own. This one
+/// really does hold the connection up: ssh has the terminal from the moment it
+/// starts, so there is nowhere left to turn a mark once it is running.
+fn wait_out_loud(display: &str) {
+    let started = Instant::now();
+
+    while started.elapsed() < SETTLE {
+        print!("\r\x1b[K\x1b[33m{}\x1b[0m Connecting to {}…", mark(started.elapsed()), display);
+        let _ = io::stdout().flush();
+        std::thread::sleep(Duration::from_millis(80));
+    }
+
+    print!("\r\x1b[K");
+    let _ = io::stdout().flush();
+}
+
 fn run_in_the_whole_terminal(args: Vec<String>) {
     let display = args.join(" ");
     println!("\x1b[1;36m══ ssh {} ══\x1b[0m\n", display);
+
+    wait_out_loud(&display);
 
     let status = Command::new("ssh")
         .args([
@@ -204,7 +232,9 @@ fn run_tui(
 
 #[cfg(test)]
 mod tests {
-    use super::asked_for;
+    use std::time::Duration;
+
+    use super::{asked_for, mark};
 
     fn args(given: &[&str]) -> Vec<String> {
         given.iter().map(|arg| arg.to_string()).collect()
@@ -214,6 +244,18 @@ mod tests {
     fn a_flag_is_taken_by_either_of_its_names() {
         assert!(asked_for(&args(&["lazyssh", "--update"]), "--update", "-u"));
         assert!(asked_for(&args(&["lazyssh", "-u"]), "--update", "-u"));
+    }
+
+    #[test]
+    fn the_mark_turns_as_the_wait_goes_on() {
+        assert_ne!(mark(Duration::from_millis(0)), mark(Duration::from_millis(100)));
+        assert_eq!(mark(Duration::from_millis(0)), mark(Duration::from_millis(99)));
+    }
+
+    #[test]
+    fn the_mark_comes_back_round_rather_than_running_out() {
+        assert_eq!(mark(Duration::from_millis(0)), mark(Duration::from_millis(1000)));
+        assert_eq!(mark(Duration::from_secs(60)), mark(Duration::from_secs(120)));
     }
 
     #[test]
