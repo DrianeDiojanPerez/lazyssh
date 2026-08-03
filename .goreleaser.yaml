@@ -16,6 +16,8 @@ before:
     - cargo install --locked cargo-zigbuild
     - cargo install cross
     - cargo fetch --locked
+    # nothing is built, tagged or published if the suite is unhappy
+    - cargo test --locked
 
 builds:
   - id: linux
