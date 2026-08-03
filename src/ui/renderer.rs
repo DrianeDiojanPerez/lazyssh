@@ -33,9 +33,8 @@ pub fn frames(app: &AppService, area: Rect) -> Frames {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            // INFO: the tab row is always there, empty or not, so opening the
-            // first connection does not shove the whole screen down a line,
-            // an edge and a line of tabs as a panel, or the tabs on their own
+            // INFO: the row is always there, empty or not, so opening the first
+            // connection does not shove the whole screen down a line
             Constraint::Length(if app.tab_panel() { 2 } else { 1 }),
             Constraint::Min(5),
             Constraint::Length(1),
@@ -55,8 +54,6 @@ pub fn frames(app: &AppService, area: Rect) -> Frames {
         .spacing(if width > 0 { 1 } else { 0 })
         .split(body);
 
-    // the filter box lives at the top of the sidebar and stays there, so the
-    // list never jumps when a search begins
     let sidebar = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(3)])
@@ -219,8 +216,6 @@ mod tests {
         assert!(!filtered.contains("id_rsa"), "the menu should have narrowed:\n{}", filtered);
     }
 
-    /// The column a piece of text starts at on screen, which is what the mouse
-    /// would report if it were clicked.
     fn column_of(screen: &str, row: u16, needle: &str) -> u16 {
         let line = screen.lines().nth(row as usize).expect("row is off screen");
         let at = line
@@ -544,7 +539,6 @@ mod tests {
             slanted
         );
 
-        // whichever way it is drawn, a click still lands on the tab
         let tabs = super::frames(&app, Rect::new(0, 0, 100, 20)).tabs;
         assert_eq!(
             crate::ui::tabs::tab_at(
@@ -714,7 +708,6 @@ mod tests {
         assert!(!bare.contains("╭ Tabs"), "the panel should be gone:\n{}", bare);
         assert!(bare.contains("tabs"), "the label takes its place:\n{}", bare);
 
-        // whichever way the row is drawn, a click still lands on the tab
         let tabs = super::frames(&app, Rect::new(0, 0, 100, 20)).tabs;
         assert_eq!(
             crate::ui::tabs::tab_at(&app, tabs, column_of(&bare, tabs.y, "server-01"), tabs.y),

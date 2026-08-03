@@ -9,8 +9,6 @@ use ratatui::{
 use crate::models::{FormField, Setting};
 use crate::services::AppService;
 
-/// Centres a popup of the given size inside the body area, shrinking it to
-/// fit rather than letting it spill over the header and the status bar.
 fn centered(width: u16, height: u16, area: Rect) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
@@ -185,7 +183,6 @@ pub fn draw_form(frame: &mut Frame, app: &AppService, title: &str, body: Rect) {
     }
 }
 
-/// Where the key menu ends up, or None when there is no room for it.
 pub fn completion_rect(app: &AppService, body: Rect) -> Option<Rect> {
     if !app.is_completing() {
         return None;
@@ -219,7 +216,6 @@ pub fn completion_rect(app: &AppService, body: Rect) -> Option<Rect> {
     Some(Rect { x: layout.inner.x, y, width, height })
 }
 
-/// Which key a click in the menu landed on.
 pub fn suggestion_at(app: &AppService, body: Rect, column: u16, row: u16) -> Option<usize> {
     let area = completion_rect(app, body)?;
     if column <= area.x || column >= area.right() - 1 {
@@ -368,7 +364,6 @@ fn theme_area(app: &AppService, body: Rect) -> Rect {
     centered(46, app.available_themes.len() as u16 + 5, body)
 }
 
-/// Which theme a click landed on.
 pub fn theme_at(app: &AppService, body: Rect, column: u16, row: u16) -> Option<usize> {
     let inner = theme_block().inner(theme_area(app, body));
     if column < inner.x || column >= inner.right() {
@@ -478,8 +473,6 @@ fn choice_block() -> Block<'static> {
         .padding(Padding::new(2, 2, 1, 0))
 }
 
-/// Asked when a connection is made and the settings have not already made up
-/// their mind for it.
 pub fn draw_launch_choice(frame: &mut Frame, app: &AppService, body: Rect) {
     let t = &app.theme;
     let (area, tab, _) = launch_buttons(body);
@@ -522,8 +515,6 @@ pub fn draw_launch_choice(frame: &mut Frame, app: &AppService, body: Rect) {
     frame.render_widget(Paragraph::new(text).block(block), area);
 }
 
-/// The answer under the cursor is filled in; the other fades back, so there is
-/// no doubt which one Enter would take.
 fn choice<'a>(label: &'a str, is_picked: bool, t: &crate::models::Theme) -> Span<'a> {
     let text = format!("  {}  ", label);
 
@@ -537,7 +528,6 @@ fn settings_area(body: Rect) -> Rect {
     centered(56, 15, body)
 }
 
-/// Which setting a click landed on.
 pub fn setting_at(body: Rect, column: u16, row: u16) -> Option<usize> {
     let inner = choice_block().inner(settings_area(body));
     if column < inner.x || column >= inner.right() {
@@ -606,7 +596,6 @@ pub fn draw_settings(frame: &mut Frame, app: &AppService, body: Rect) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-/// A group of keys that belong together, drawn as one block of the help.
 struct Section {
     title: &'static str,
     keys: &'static [(&'static str, &'static str)],
@@ -615,8 +604,6 @@ struct Section {
 const COLUMN: usize = 33;
 const CAP: usize = 7;
 
-/// Two columns of groups: getting around on the left, doing things on the
-/// right, in the order someone new to it would need them.
 fn sections() -> [[Section; 2]; 2] {
     [
         [

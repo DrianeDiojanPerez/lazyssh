@@ -40,8 +40,6 @@ pub fn draw(frame: &mut Frame, app: &AppService, session: &Session, area: Rect) 
         // INFO: ssh puts its own notices out as lines opening with a star, and
         // says them in plain text; they are worth the warning colour
         let notice = is_notice(screen, row, inner.width);
-        // INFO: a plain shell prompt is the other thing worth picking out of
-        // the wall of text, so the eye can find where each command started
         let prompt = prompt_end(screen, row, inner.width);
 
         for column in 0..inner.width {
