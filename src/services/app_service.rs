@@ -518,15 +518,15 @@ impl AppService {
         }
     }
 
-    /// Closes the tabs that have nothing left to say. A session you logged out
-    /// of goes away on its own, and one that failed stays put so the reason it
-    /// printed can still be read.
+    /// Closes the tabs that have nothing left to say. A session that ran and
+    /// ended goes away on its own, and one ssh never got going stays put so
+    /// the reason it printed can still be read.
     pub fn reap_finished_sessions(&mut self) {
         let mut closed = Vec::new();
         let mut index = 0;
 
         while index < self.sessions.len() {
-            if self.sessions[index].ended_cleanly() {
+            if self.sessions[index].is_finished() {
                 closed.push(self.sessions[index].alias.clone());
                 self.close_tab(index);
             } else {
@@ -1165,8 +1165,8 @@ mod tests {
 
     /// Runs a process in a tab of its own and waits for it to be over, which
     /// is what logging out of a session looks like from here.
-    fn tab_running(app: &mut AppService, alias: &str, program: &str) {
-        let session = Session::spawn(alias, program, &[], 20, 40).expect("the pty should start");
+    fn tab_running(app: &mut AppService, alias: &str, program: &str, args: &[String]) {
+        let session = Session::spawn(alias, program, args, 20, 40).expect("the pty should start");
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while session.is_running() {
@@ -1181,7 +1181,7 @@ mod tests {
     #[test]
     fn a_session_that_logged_out_closes_its_own_tab() {
         let (mut app, _repo) = app_with(vec![host("box", 22)]);
-        tab_running(&mut app, "box", "true");
+        tab_running(&mut app, "box", "true", &[]);
 
         app.reap_finished_sessions();
 
@@ -1191,9 +1191,19 @@ mod tests {
     }
 
     #[test]
-    fn a_session_that_failed_keeps_its_tab_so_it_can_be_read() {
+    fn a_session_left_on_a_ctrl_c_closes_its_tab_too() {
         let (mut app, _repo) = app_with(vec![host("box", 22)]);
-        tab_running(&mut app, "box", "false");
+        tab_running(&mut app, "box", "sh", &["-c".into(), "exit 130".into()]);
+
+        app.reap_finished_sessions();
+
+        assert!(app.sessions.is_empty());
+    }
+
+    #[test]
+    fn a_session_ssh_never_got_going_keeps_its_tab_so_it_can_be_read() {
+        let (mut app, _repo) = app_with(vec![host("box", 22)]);
+        tab_running(&mut app, "box", "sh", &["-c".into(), "exit 255".into()]);
 
         app.reap_finished_sessions();
 
@@ -1204,7 +1214,7 @@ mod tests {
     #[test]
     fn reaping_leaves_the_tabs_that_are_still_going() {
         let (mut app, _repo) = app_with(vec![host("box", 22)]);
-        tab_running(&mut app, "gone", "true");
+        tab_running(&mut app, "gone", "true", &[]);
         app.sessions.push(
             Session::spawn("busy", "sleep", &["5".to_string()], 20, 40).expect("the pty starts"),
         );

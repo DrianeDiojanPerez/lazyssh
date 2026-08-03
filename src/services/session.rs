@@ -121,10 +121,17 @@ impl Session {
         }
     }
 
-    /// A session you logged out of, as against one that fell over: ssh leaves
-    /// anything it could not do behind on the screen and a code to match.
-    pub fn ended_cleanly(&self) -> bool {
-        !self.is_running() && self.exit_code() == Some(0)
+    /// Whether ssh itself gave up, rather than the session having run and
+    /// ended. ssh keeps 255 for its own troubles and hands back whatever the
+    /// remote shell exited with otherwise: 0 for a logout, 130 for a Ctrl-C at
+    /// the prompt, and every one of those was a session that really ran.
+    pub fn ssh_failed(&self) -> bool {
+        matches!(self.exit_code(), Some(255) | Some(-1))
+    }
+
+    /// A session that is over and has nothing left to explain.
+    pub fn is_finished(&self) -> bool {
+        !self.is_running() && !self.ssh_failed()
     }
 
     pub fn send(&mut self, bytes: &[u8]) {
@@ -186,23 +193,38 @@ mod tests {
     }
 
     #[test]
-    fn a_session_that_logged_out_says_it_ended_cleanly() {
+    fn a_session_that_logged_out_is_finished() {
         let session = Session::spawn("test", "true", &[], 10, 40).expect("the pty should start");
 
         wait_for_the_end(&session);
 
         assert_eq!(session.exit_code(), Some(0));
-        assert!(session.ended_cleanly());
+        assert!(session.is_finished());
     }
 
     #[test]
-    fn a_session_that_failed_is_not_a_clean_ending() {
-        let session = Session::spawn("test", "false", &[], 10, 40).expect("the pty should start");
+    fn a_prompt_left_on_a_ctrl_c_is_finished_all_the_same() {
+        let session = ending_with(130);
+
+        assert_eq!(session.exit_code(), Some(130));
+        assert!(session.is_finished());
+    }
+
+    #[test]
+    fn ssh_giving_up_is_not_a_finished_session() {
+        let session = ending_with(255);
+
+        assert!(session.ssh_failed());
+        assert!(!session.is_finished());
+    }
+
+    /// A session that stopped with the given code, the way ssh reports one.
+    fn ending_with(code: i32) -> Session {
+        let args = ["-c".to_string(), format!("exit {}", code)];
+        let session = Session::spawn("test", "sh", &args, 10, 40).expect("the pty should start");
 
         wait_for_the_end(&session);
-
-        assert_eq!(session.exit_code(), Some(1));
-        assert!(!session.ended_cleanly());
+        session
     }
 
     /// The flag is only cleared once the process has been waited on, so a
