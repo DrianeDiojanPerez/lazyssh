@@ -378,6 +378,9 @@ fn on_form(app: &mut AppService, key: KeyEvent, ssh_repo: &dyn SshRepository) {
             commit_form(app, ssh_repo);
         }
         KeyCode::Enter if app.accept_suggestion() => {}
+        // INFO: a list field needs Enter for its own line breaks, so the way
+        // out of it is Tab or the Save button, and Ctrl-S from anywhere
+        KeyCode::Enter if app.form_field.is_multiline() => app.form_new_line(),
         KeyCode::Enter => commit_form(app, ssh_repo),
 
         KeyCode::Backspace => app.form_delete_char(),
