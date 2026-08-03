@@ -21,6 +21,7 @@ pub struct AppService {
     // INFO: the port is kept as text while the form is open so it can be
     // cleared and retyped, and is only parsed when the form is saved
     form_port: String,
+    form_options: String,
 
     pub theme: Theme,
     pub theme_preference: ThemePreference,
@@ -77,6 +78,7 @@ impl AppService {
             form_draft: SshHost::empty(),
             form_field: FormField::Alias,
             form_port: String::new(),
+            form_options: String::new(),
 
             theme,
             theme_preference: preference,
@@ -226,6 +228,7 @@ impl AppService {
         self.suggestion_cursor = None;
         self.form_draft = SshHost::empty();
         self.form_port = String::new();
+        self.form_options = String::new();
         self.form_field = FormField::Alias;
         self.mode = Mode::AddHost;
     }
@@ -235,6 +238,7 @@ impl AppService {
         if let Some(index) = self.selected_real_index() {
             self.form_draft = self.hosts[index].clone();
             self.form_port = self.form_draft.port.to_string();
+            self.form_options = write_options(&self.form_draft.extra_options);
             self.form_field = FormField::Alias;
             self.mode = Mode::EditHost(index);
         }
@@ -253,7 +257,7 @@ impl AppService {
             port: SshHost::DEFAULT_PORT,
             user: self.form_draft.user.trim().to_string(),
             identity_file: self.form_draft.identity_file.trim().to_string(),
-            extra_options: self.form_draft.extra_options.clone(),
+            extra_options: Vec::new(),
         };
 
         if !draft.is_valid() {
@@ -267,6 +271,7 @@ impl AppService {
         }
 
         draft.port = self.parse_form_port()?;
+        draft.extra_options = parse_options(&self.form_options)?;
         Ok(draft)
     }
 
@@ -679,6 +684,7 @@ impl AppService {
             FormField::Port => self.form_port.clone(),
             FormField::User => self.form_draft.user.clone(),
             FormField::IdentityFile => self.form_draft.identity_file.clone(),
+            FormField::Options => self.form_options.clone(),
         }
     }
 
@@ -693,6 +699,7 @@ impl AppService {
             FormField::Port => self.form_port = value,
             FormField::User => self.form_draft.user = value,
             FormField::IdentityFile => self.form_draft.identity_file = value,
+            FormField::Options => self.form_options = value,
         }
     }
 
@@ -848,6 +855,37 @@ impl AppService {
     }
 }
 
+/// The options the form has no field of its own for, written the way they read
+/// in the file: a name, a space and its value, with a semicolon between one and
+/// the next.
+fn write_options(options: &[(String, String)]) -> String {
+    options
+        .iter()
+        .map(|(name, value)| format!("{} {}", name, value))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn parse_options(text: &str) -> Result<Vec<(String, String)>, String> {
+    let mut parsed = Vec::new();
+
+    for entry in text.split(';') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+
+        match entry.split_once(char::is_whitespace) {
+            Some((name, value)) if !value.trim().is_empty() => {
+                parsed.push((name.to_string(), value.trim().to_string()))
+            }
+            _ => return Err(format!("'{}' needs a name and a value", entry)),
+        }
+    }
+
+    Ok(parsed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -858,6 +896,81 @@ mod tests {
         for c in text.chars() {
             app.form_type_char(c);
         }
+    }
+
+    #[test]
+    fn an_option_the_form_has_no_field_for_can_still_be_typed_in() {
+        let (mut app, repo) = app_with(vec![]);
+
+        app.begin_add();
+        type_into(&mut app, FormField::Alias, "box");
+        type_into(&mut app, FormField::HostName, "10.0.0.5");
+        type_into(&mut app, FormField::Options, "SetEnv TERM=xterm-256color");
+        app.commit_add(&repo);
+
+        assert_eq!(
+            app.host_at(0).map(|h| h.extra_options.clone()),
+            Some(vec![("SetEnv".into(), "TERM=xterm-256color".into())])
+        );
+    }
+
+    #[test]
+    fn the_options_a_host_already_had_come_back_up_for_editing() {
+        let mut box_host = host("box", 22);
+        box_host.extra_options = vec![
+            ("HostKeyAlgorithms".into(), "ssh-rsa".into()),
+            ("SetEnv".into(), "TERM=xterm-256color".into()),
+        ];
+
+        let (mut app, repo) = app_with(vec![box_host]);
+        app.begin_edit();
+
+        assert_eq!(
+            app.form_value(&FormField::Options),
+            "HostKeyAlgorithms ssh-rsa; SetEnv TERM=xterm-256color"
+        );
+
+        type_into(&mut app, FormField::Options, "; Compression yes");
+        app.commit_edit(0, &repo);
+
+        assert_eq!(
+            app.host_at(0).map(|h| h.extra_options.len()),
+            Some(3),
+            "the option typed on the end should have been kept"
+        );
+    }
+
+    #[test]
+    fn an_option_with_nothing_but_a_name_is_refused() {
+        let (mut app, repo) = app_with(vec![]);
+
+        app.begin_add();
+        type_into(&mut app, FormField::Alias, "box");
+        type_into(&mut app, FormField::HostName, "10.0.0.5");
+        type_into(&mut app, FormField::Options, "Compression");
+        app.commit_add(&repo);
+
+        assert_eq!(app.host_count(), 0, "the host should not have been saved");
+        assert_eq!(
+            app.form_error.as_deref(),
+            Some("'Compression' needs a name and a value")
+        );
+    }
+
+    #[test]
+    fn clearing_the_options_field_takes_the_options_off_the_host() {
+        let mut box_host = host("box", 22);
+        box_host.extra_options = vec![("Compression".into(), "yes".into())];
+
+        let (mut app, repo) = app_with(vec![box_host]);
+        app.begin_edit();
+        app.form_field = FormField::Options;
+        while !app.form_value(&FormField::Options).is_empty() {
+            app.form_delete_char();
+        }
+        app.commit_edit(0, &repo);
+
+        assert_eq!(app.host_at(0).map(|h| h.extra_options.is_empty()), Some(true));
     }
 
     #[test]
