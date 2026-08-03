@@ -191,6 +191,16 @@ fn on_mouse(
             })
         }
 
+        // INFO: the pointer resting on a card is enough to say which host is
+        // wanted, so the details follow it around. Nothing is opened until it
+        // is actually clicked
+        (Mode::Normal | Mode::Search, MouseEventKind::Moved) if !app.is_launching() => {
+            if let Some(index) = panels::host_at(app, frames.list, column, row) {
+                app.select(index);
+            }
+            return Ok(());
+        }
+
         (_, MouseEventKind::Down(MouseButton::Left)) => {}
         _ => return Ok(()),
     }
