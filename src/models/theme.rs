@@ -1,6 +1,8 @@
 use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Serialize};
 
+use super::app_state::LaunchStyle;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rgb {
     pub r: u8,
@@ -60,17 +62,19 @@ impl Theme {
         Style::default().fg(self.border_focused.to_color()).bg(self.background())
     }
 
-    pub fn header(&self) -> Style {
-        Style::default()
-            .fg(self.header_fg.to_color())
-            .bg(if self.transparent { Color::Reset } else { self.header_bg.to_color() })
-            .add_modifier(Modifier::BOLD)
-    }
-
     pub fn selected(&self) -> Style {
         Style::default()
             .fg(self.selected_fg.to_color())
             .bg(self.selected_bg.to_color())
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// A badge: the theme background written on top of a solid colour, so a
+    /// short label reads as a filled chip rather than as more text.
+    pub fn pill(&self, color: &Rgb) -> Style {
+        Style::default()
+            .fg(self.bg.to_color())
+            .bg(color.to_color())
             .add_modifier(Modifier::BOLD)
     }
 
@@ -88,16 +92,22 @@ impl Theme {
             .bg(if self.transparent { Color::Reset } else { self.status_bar_bg.to_color() })
     }
 
+    /// A chip that sits back: it keeps a surface of its own, so it still reads
+    /// as something you can pick, without competing with the one in front.
+    pub fn surface(&self) -> Style {
+        Style::default()
+            .fg(self.fg.to_color())
+            .bg(self.input_bg.to_color())
+    }
+
+    /// The lamp on a card that answered, which wants the success colour
+    /// without the background the other styles carry.
+    pub fn success_dot(&self) -> Style {
+        Style::default().fg(self.success.to_color())
+    }
+
     pub fn error(&self) -> Style {
         Style::default().fg(self.error.to_color()).bg(self.background())
-    }
-
-    pub fn success(&self) -> Style {
-        Style::default().fg(self.success.to_color()).bg(self.background())
-    }
-
-    pub fn warning(&self) -> Style {
-        Style::default().fg(self.warning.to_color()).bg(self.background())
     }
 
     pub fn muted(&self) -> Style {
@@ -125,9 +135,6 @@ impl Theme {
         self.error().add_modifier(Modifier::BOLD)
     }
 
-    pub fn bold_warning(&self) -> Style {
-        self.warning().add_modifier(Modifier::BOLD)
-    }
 
     pub fn bold_accent_secondary(&self) -> Style {
         self.accent_secondary().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
@@ -138,6 +145,24 @@ impl Theme {
 pub struct ThemePreference {
     pub theme_index: usize,
     pub transparent: bool,
+    // INFO: written later than the rest, so a settings file from an older
+    // build still loads and simply gets the default
+    #[serde(default = "ask_first")]
+    pub launch_style: LaunchStyle,
+    /// Tabs are plain blocks unless this is turned on.
+    #[serde(default)]
+    pub tab_edges: bool,
+    /// Tabs live in a panel of their own unless this is turned off.
+    #[serde(default = "yes")]
+    pub tab_panel: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn ask_first() -> LaunchStyle {
+    LaunchStyle::Ask
 }
 
 impl Default for ThemePreference {
@@ -145,6 +170,9 @@ impl Default for ThemePreference {
         Self {
             theme_index: 0,
             transparent: false,
+            launch_style: LaunchStyle::Ask,
+            tab_edges: false,
+            tab_panel: true,
         }
     }
 }

@@ -2,10 +2,13 @@ mod input;
 mod models;
 mod repositories;
 mod services;
+#[cfg(test)]
+mod test_support;
 mod ui;
 
 use std::io;
 use std::process::Command;
+use std::time::Instant;
 
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
@@ -42,22 +45,48 @@ pub fn main() -> io::Result<()> {
     let mut app = AppService::initialize(&ssh_repo, &theme_repo);
 
     loop {
-        let action = run_tui_until_action(&mut app, &ssh_repo, &theme_repo)?;
-
-        match action {
-            Action::Quit => break,
+        match run_tui(&mut app, &ssh_repo, &theme_repo)? {
             Action::LaunchSsh(args) => {
-                execute_ssh_session(args);
+                run_in_the_whole_terminal(args);
                 app.reload_from_disk(&ssh_repo);
             }
-            Action::Continue => {}
+            _ => break,
         }
     }
 
     Ok(())
 }
 
-fn run_tui_until_action(
+/// The old way of connecting: the interface steps aside, ssh gets the terminal
+/// to itself, and lazyssh comes back when it is done.
+fn run_in_the_whole_terminal(args: Vec<String>) {
+    let display = args.join(" ");
+    println!("\x1b[1;36m══ ssh {} ══\x1b[0m\n", display);
+
+    let status = Command::new("ssh")
+        .args([
+            "-o",
+            "ConnectTimeout=1",
+            "-o",
+            "ServerAliveInterval=2",
+            "-o",
+            "ServerAliveCountMax=2",
+        ])
+        .args(&args)
+        .status();
+
+    match status {
+        Ok(exit) => println!(
+            "\n\x1b[1;33m═══ session ended (exit: {}) ═══\x1b[0m",
+            exit.code().unwrap_or(-1)
+        ),
+        Err(e) => println!("\n\x1b[1;31m═══ ssh failed: {} ═══\x1b[0m", e),
+    }
+
+    println!("\x1b[90mReturning to lazyssh...\x1b[0m\n");
+}
+
+fn run_tui(
     app: &mut AppService,
     ssh_repo: &FileSshRepository,
     theme_repo: &FileThemeRepository,
@@ -69,14 +98,39 @@ fn run_tui_until_action(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
+    let mut last_frame = Instant::now();
+    let mut clicks = input::Clicks::default();
+
     let action = loop {
+        // INFO: a session that has logged out is closed before the frame it
+        // would have been drawn in, so the tab goes as soon as it is done
+        app.reap_finished_sessions();
+
+        // INFO: the pty is told the size of the pane before it is drawn, so
+        // the remote end lays out for the space it actually has
+        let area = terminal.size()?;
+        let pane = ui::renderer::frames(app, area).main;
+        if let Some(session) = app.active_session_mut() {
+            session.resize(pane.height.saturating_sub(2), pane.width.saturating_sub(2));
+        }
+
         terminal.draw(|frame| ui::render(frame, app))?;
-        input::handle_next_event(app, ssh_repo, theme_repo)?;
+
+        // INFO: toasts age by however long the frame took, but only while some
+        // were already on screen: with none, the loop sits in a blocking read
+        // and that whole wait would otherwise expire the toast it wakes up for
+        let animating = app.has_toasts() || app.has_live_session() || app.probes.is_working();
+        input::handle_next_event(app, ssh_repo, theme_repo, &mut clicks)?;
+
+        let now = Instant::now();
+        if animating {
+            app.advance_toasts(now.duration_since(last_frame));
+        }
+        last_frame = now;
 
         let action = app.take_action();
-        match action {
-            Action::Continue => continue,
-            _ => break action,
+        if !matches!(action, Action::Continue) {
+            break action;
         }
     };
 
@@ -89,36 +143,4 @@ fn run_tui_until_action(
     terminal.show_cursor()?;
 
     Ok(action)
-}
-
-fn execute_ssh_session(args: Vec<String>) {
-    let display = args.join(" ");
-
-    println!("\x1b[1;36m══ ssh {} ══\x1b[0m\n", display);
-
-    let status = Command::new("ssh")
-        .args(&[
-            "-o",
-            "ConnectTimeout=1",
-            "-o",
-            "ServerAliveInterval=2",
-            "-o",
-            "ServerAliveCountMax=2",
-        ])
-        .args(&args)
-        .status();
-
-    match status {
-        Ok(exit) => {
-            println!(
-                "\n\x1b[1;33m═══ SSH session ended (exit: {}) ═══\x1b[0m",
-                exit.code().unwrap_or(-1)
-            );
-        }
-        Err(e) => {
-            println!("\n\x1b[1;31m═══ SSH failed: {} ═══\x1b[0m", e);
-        }
-    }
-
-    println!("\x1b[90mReturning to SSH Manager...\x1b[0m\n");
 }

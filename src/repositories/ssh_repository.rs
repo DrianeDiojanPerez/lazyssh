@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use chrono::Local;
@@ -9,6 +10,9 @@ pub trait SshRepository {
     fn load_all(&self) -> (String, Vec<SshHost>);
     fn save_all(&self, preamble: &str, hosts: &[SshHost]) -> Result<PathBuf, String>;
     fn config_path(&self) -> PathBuf;
+    /// The private keys sitting next to the config, offered as completions for
+    /// the IdentityFile field.
+    fn identity_files(&self) -> Vec<String>;
 }
 
 pub struct FileSshRepository {
@@ -112,6 +116,50 @@ impl SshRepository for FileSshRepository {
     fn config_path(&self) -> PathBuf {
         self.path.clone()
     }
+
+    fn identity_files(&self) -> Vec<String> {
+        let Some(dir) = self.path.parent() else {
+            return Vec::new();
+        };
+
+        let Ok(entries) = fs::read_dir(dir) else {
+            return Vec::new();
+        };
+
+        let mut keys: Vec<String> = entries
+            .flatten()
+            .filter(|entry| entry.path().is_file())
+            .filter(|entry| is_private_key(&entry.path()))
+            .map(|entry| shorten(&entry.path()))
+            .collect();
+
+        keys.sort();
+        keys
+    }
+}
+
+/// A private key announces itself on its first line, which beats guessing from
+/// the file name and keeps known_hosts and the backups out of the list.
+fn is_private_key(path: &std::path::Path) -> bool {
+    if path.extension().is_some_and(|ext| ext == "pub") {
+        return false;
+    }
+
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
+
+    let mut first = String::new();
+    BufReader::new(file).read_line(&mut first).is_ok() && first.contains("PRIVATE KEY")
+}
+
+fn shorten(path: &std::path::Path) -> String {
+    let full = path.to_string_lossy().to_string();
+
+    match dirs::home_dir() {
+        Some(home) => full.replacen(&home.to_string_lossy().to_string(), "~", 1),
+        None => full,
+    }
 }
 
 struct SshConfigParser;
@@ -180,27 +228,30 @@ impl SshConfigParser {
 
         match key.to_lowercase().as_str() {
             "hostname" => host.hostname = value,
-            "port" => host.port = value.parse().unwrap_or(22),
+            "port" => host.port = value.parse().unwrap_or(SshHost::DEFAULT_PORT),
             "user" => host.user = value,
             "identityfile" => host.identity_file = value,
             _ => host.extra_options.push((key, value)),
         }
     }
 
+    /// ssh_config accepts `Key Value`, `Key=Value` and `Key = Value`, so the
+    /// key ends at whichever separator comes first. Splitting on `=` before
+    /// whitespace would cut `SetEnv NAME=value` in the wrong place.
     fn split_key_value(line: &str) -> (String, String) {
-        if let Some(pos) = line.find('=') {
-            let k = line[..pos].trim().to_string();
-            let v = line[pos + 1..].trim().to_string();
-            return (k, v);
-        }
+        let separator = line
+            .char_indices()
+            .find(|(_, c)| c.is_whitespace() || *c == '=')
+            .map(|(i, _)| i);
 
-        if let Some(pos) = line.find(char::is_whitespace) {
-            let k = line[..pos].trim().to_string();
-            let v = line[pos..].trim().to_string();
-            return (k, v);
-        }
+        let Some(pos) = separator else {
+            return (String::new(), String::new());
+        };
 
-        (String::new(), String::new())
+        let rest = line[pos..].trim_start();
+        let rest = rest.strip_prefix('=').unwrap_or(rest);
+
+        (line[..pos].trim().to_string(), rest.trim().to_string())
     }
 
     fn strip_inline_comment(s: &str) -> &str {
@@ -221,5 +272,53 @@ impl SshConfigParser {
         }
 
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn round_trip(config: &str) -> String {
+        let (preamble, hosts) = SshConfigParser::parse(config);
+        FileSshRepository::serialize(&preamble, &hosts)
+    }
+
+    #[test]
+    fn an_option_value_containing_equals_survives_a_round_trip() {
+        let config = "Host box\n    HostName 10.0.0.5\n    SetEnv TERM=xterm-256color\n";
+
+        assert!(
+            round_trip(config).contains("SetEnv TERM=xterm-256color"),
+            "SetEnv lost its '=':\n{}",
+            round_trip(config)
+        );
+    }
+
+    #[test]
+    fn an_option_written_with_equals_is_still_understood() {
+        let (_, hosts) = SshConfigParser::parse("Host box\n    HostName=10.0.0.5\n    Port=2222\n");
+
+        assert_eq!(hosts[0].hostname, "10.0.0.5");
+        assert_eq!(hosts[0].port, 2222);
+    }
+
+    #[test]
+    fn spaces_around_the_equals_are_ignored() {
+        let (_, hosts) = SshConfigParser::parse("Host box\n    Port = 2222\n");
+
+        assert_eq!(hosts[0].port, 2222);
+    }
+
+    #[test]
+    fn unknown_options_keep_their_value_verbatim() {
+        let (_, hosts) = SshConfigParser::parse(
+            "Host box\n    HostName 10.0.0.5\n    ProxyCommand ssh -W %h:%p jump\n",
+        );
+
+        assert_eq!(
+            hosts[0].extra_options,
+            vec![("ProxyCommand".to_string(), "ssh -W %h:%p jump".to_string())]
+        );
     }
 }

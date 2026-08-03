@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     widgets::Block,
     Frame,
 };
@@ -9,60 +9,909 @@ use crate::services::AppService;
 
 use super::panels;
 use super::popups;
+use super::session;
+use super::tabs;
+use super::toasts;
+
+/// Where each part of the screen sits. Worked out once so that drawing and
+/// mouse hit testing can never disagree about what is where.
+pub struct Frames {
+    pub tabs: Rect,
+    pub body: Rect,
+    pub sidebar: Option<Rect>,
+    pub search: Rect,
+    pub list: Rect,
+    pub main: Rect,
+    pub status: Rect,
+}
+
+/// The sidebar is a fixed strip rather than a share of the width, so the
+/// session beside it keeps its size as the window grows.
+const SIDEBAR: u16 = 40;
+
+pub fn frames(app: &AppService, area: Rect) -> Frames {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            // INFO: the tab row is always there, empty or not, so opening the
+            // first connection does not shove the whole screen down a line,
+            // an edge and a line of tabs as a panel, or the tabs on their own
+            Constraint::Length(if app.tab_panel() { 2 } else { 1 }),
+            Constraint::Min(5),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    let body = rows[1];
+    let width = if app.sidebar_open {
+        SIDEBAR.min(body.width.saturating_sub(20)).max(0)
+    } else {
+        0
+    };
+
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(width), Constraint::Min(10)])
+        .spacing(if width > 0 { 1 } else { 0 })
+        .split(body);
+
+    // the filter box lives at the top of the sidebar and stays there, so the
+    // list never jumps when a search begins
+    let sidebar = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(3)])
+        .split(columns[0]);
+
+    Frames {
+        tabs: rows[0],
+        body,
+        sidebar: (width > 0).then_some(columns[0]),
+        search: sidebar[0],
+        list: sidebar[1],
+        main: columns[1],
+        status: rows[2],
+    }
+}
 
 pub fn render(frame: &mut Frame, app: &AppService) {
     let area = frame.size();
 
     frame.render_widget(Block::default().style(app.theme.base()), area);
 
-    let main_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(4),
-            Constraint::Min(8),
-            Constraint::Length(2),
-        ])
-        .split(area);
+    let frames = frames(app, area);
 
-    panels::draw_header(frame, app, main_layout[0]);
-    draw_body(frame, app, main_layout[1]);
-    panels::draw_status_bar(frame, app, main_layout[2]);
+    tabs::draw(frame, app, frames.tabs);
+    if frames.sidebar.is_some() {
+        panels::draw_search_bar(frame, app, frames.search);
+        panels::draw_host_list(frame, app, frames.list);
+    }
 
+    match app.active_session() {
+        Some(session) => session::draw(frame, app, session, frames.main),
+        None => panels::draw_detail_panel(frame, app, frames.main),
+    }
+
+    panels::draw_status_bar(frame, app, frames.status);
+
+    // INFO: toasts belong to the screen, not to the panels, so they hang in
+    // the very corner rather than starting where the details do
+    toasts::draw(frame, app, area);
+
+    let body = frames.body;
     match &app.mode {
-        Mode::AddHost => popups::draw_form(frame, app, " + Add SSH Host "),
-        Mode::EditHost(_) => popups::draw_form(frame, app, " Edit SSH Host "),
-        Mode::ConfirmDelete(idx) => popups::draw_delete_confirmation(frame, app, *idx),
-        Mode::SelectTheme => popups::draw_theme_selector(frame, app),
-        Mode::Help => popups::draw_help(frame, app),
+        Mode::AddHost => popups::draw_form(frame, app, " Add host ", body),
+        Mode::EditHost(_) => popups::draw_form(frame, app, " Edit host ", body),
+        Mode::ConfirmDelete(idx) => popups::draw_delete_confirmation(frame, app, *idx, body),
+        Mode::SelectTheme => popups::draw_theme_selector(frame, app, body),
+        Mode::ChooseLaunch => popups::draw_launch_choice(frame, app, body),
+        Mode::Settings => popups::draw_settings(frame, app, body),
+        Mode::Help => popups::draw_help(frame, app, body),
         _ => {}
     }
 }
 
-fn draw_body(frame: &mut Frame, app: &AppService, area: ratatui::layout::Rect) {
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
 
-    let has_search = app.mode == Mode::Search;
+    use crossterm::event::KeyCode;
+    use ratatui::layout::Rect;
 
-    let left_panes = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(if has_search { 3 } else { 0 }),
-            Constraint::Min(5),
-        ])
-        .split(columns[0]);
+    use crate::models::Toast;
+    use crate::test_support::{app_with, host};
+    use crate::ui::screenshot;
 
-    if has_search {
-        panels::draw_search_bar(frame, app, left_panes[0]);
+    fn hosts(count: usize) -> Vec<crate::models::SshHost> {
+        (1..=count).map(|i| host(&format!("server-{:02}", i), 22)).collect()
     }
-    panels::draw_host_list(frame, app, left_panes[1]);
 
-    let right_panes = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(8)])
-        .split(columns[1]);
+    #[test]
+    fn a_toast_opens_out_of_the_top_right_corner() {
+        let (mut app, _repo) = app_with(hosts(4));
+        app.toasts.push(Toast::success("Added 'prod-web'"));
+        app.advance_toasts(Duration::from_millis(40));
 
-    panels::draw_detail_panel(frame, app, right_panes[0]);
+        let sliding = screenshot::draw(&app, 80, 18);
+        assert!(
+            !sliding.contains("Added 'prod-web'"),
+            "the toast arrived at full width instead of opening:\n{}",
+            sliding
+        );
+
+        app.advance_toasts(Duration::from_millis(300));
+        let open = screenshot::draw(&app, 80, 18);
+        let title = open
+            .lines()
+            .find(|line| line.contains("Success"))
+            .unwrap_or_else(|| panic!("the toast never opened:\n{}", open));
+
+        assert!(title.ends_with('│'), "the toast is not against the right edge:\n{}", open);
+        assert!(
+            open.lines().any(|line| line.contains("Added 'prod-web'")),
+            "the message is cut off:\n{}",
+            open
+        );
+    }
+
+    #[test]
+    fn a_toast_leaves_without_anyone_pressing_a_key() {
+        let (mut app, _repo) = app_with(hosts(4));
+        app.toasts.push(Toast::success("Added 'prod-web'"));
+
+        app.advance_toasts(Duration::from_secs(6));
+
+        assert!(!app.has_toasts(), "the toast outstayed its lifetime");
+        assert!(!screenshot::draw(&app, 80, 18).contains("Added"));
+    }
+
+    /// The alias line of each card, as drawn: "│ server-07    :22 │".
+    fn alias_rows(screen: &str) -> Vec<(u16, usize)> {
+        screen
+            .lines()
+            .enumerate()
+            .filter_map(|(row, line)| {
+                let text = line.trim_start_matches(['│', '┃', ' ']);
+                let number = text.strip_prefix("server-")?.get(..2)?.parse::<usize>().ok()?;
+                (!text.contains('@')).then_some((row as u16, number - 1))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_toast_divider_meets_both_borders() {
+        let (mut app, _repo) = app_with(hosts(4));
+        app.toasts.push(Toast::success("Added 'prod-web'"));
+        app.advance_toasts(Duration::from_millis(300));
+
+        let screen = screenshot::draw(&app, 80, 18);
+        let divider = screen
+            .lines()
+            .find(|line| line.contains('├'))
+            .unwrap_or_else(|| panic!("the toast has no divider:\n{}", screen));
+
+        let (_, toast_part) = divider.split_once('├').unwrap();
+        assert!(toast_part.ends_with('┤'), "the divider stops short of the border:\n{}", screen);
+        assert!(
+            !toast_part.contains(' '),
+            "the divider has a gap in it:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn the_identity_field_offers_the_keys_on_disk() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.begin_add();
+        app.form_field = crate::models::FormField::IdentityFile;
+
+        let screen = screenshot::draw(&app, 80, 24);
+
+        assert!(screen.contains("keys"), "the menu never opened:\n{}", screen);
+        assert!(screen.contains("~/.ssh/id_ed25519"), "a key is missing:\n{}", screen);
+        assert!(screen.contains("IdentityFile"), "the menu covers its own field:\n{}", screen);
+
+        for c in "work".chars() {
+            app.form_type_char(c);
+        }
+        let filtered = screenshot::draw(&app, 80, 24);
+
+        assert!(filtered.contains("work_ed255"), "the match is missing:\n{}", filtered);
+        assert!(!filtered.contains("id_rsa"), "the menu should have narrowed:\n{}", filtered);
+    }
+
+    /// The column a piece of text starts at on screen, which is what the mouse
+    /// would report if it were clicked.
+    fn column_of(screen: &str, row: u16, needle: &str) -> u16 {
+        let line = screen.lines().nth(row as usize).expect("row is off screen");
+        let at = line
+            .find(needle)
+            .unwrap_or_else(|| panic!("'{}' is not on row {}:\n{}", needle, row, screen));
+
+        line[..at].chars().count() as u16
+    }
+
+    fn row_of(screen: &str, needle: &str) -> u16 {
+        screen
+            .lines()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("'{}' is nowhere on screen:\n{}", needle, screen)) as u16
+    }
+
+    #[test]
+    fn the_status_bar_hints_are_buttons() {
+        let (app, _repo) = app_with(hosts(3));
+        let frames = super::frames(&app, Rect::new(0, 0, 80, 24));
+        let screen = screenshot::draw(&app, 80, 24);
+        let bar = frames.status.y;
+
+        for (hint, code) in [("a add", KeyCode::Char('a')), ("? help", KeyCode::Char('?'))] {
+            let column = column_of(&screen, bar, hint);
+            assert_eq!(
+                crate::ui::panels::hint_at(&app, frames.status, column, bar),
+                Some(code),
+                "clicking '{}' should press its key:\n{}",
+                hint,
+                screen
+            );
+        }
+    }
+
+    #[test]
+    fn the_form_answers_to_clicks_on_its_fields_and_buttons() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.begin_add();
+
+        let body = super::frames(&app, Rect::new(0, 0, 80, 24)).body;
+        let screen = screenshot::draw(&app, 80, 24);
+
+        let row = row_of(&screen, "Port  default 22");
+        let column = column_of(&screen, row, "Port");
+        assert_eq!(
+            crate::ui::popups::field_at(&app, body, column, row),
+            Some(crate::models::FormField::Port),
+            "clicking the Port row should focus it:\n{}",
+            screen
+        );
+
+        let row = row_of(&screen, " Save ");
+        assert_eq!(
+            crate::ui::popups::form_button_at(&app, body, column_of(&screen, row, " Save ") + 1, row),
+            Some(crate::ui::popups::FormButton::Save),
+            "the Save button is not where it is drawn:\n{}",
+            screen
+        );
+        assert_eq!(
+            crate::ui::popups::form_button_at(&app, body, column_of(&screen, row, " Cancel ") + 1, row),
+            Some(crate::ui::popups::FormButton::Cancel),
+            "the Cancel button is not where it is drawn:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn the_delete_popup_answers_to_clicks_on_its_buttons() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.begin_delete();
+
+        let body = super::frames(&app, Rect::new(0, 0, 80, 24)).body;
+        let screen = screenshot::draw(&app, 80, 24);
+        // the title says "Delete host" too, so the buttons are found by the
+        // one word that only appears on their row
+        let row = row_of(&screen, " Keep ");
+
+        assert_eq!(
+            crate::ui::popups::delete_button_at(body, column_of(&screen, row, " Delete ") + 1, row),
+            Some(crate::ui::popups::DeleteButton::Delete),
+            "the Delete button is not where it is drawn:\n{}",
+            screen
+        );
+        assert_eq!(
+            crate::ui::popups::delete_button_at(body, column_of(&screen, row, " Keep ") + 1, row),
+            Some(crate::ui::popups::DeleteButton::Keep),
+            "the Keep button is not where it is drawn:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn the_key_menu_answers_to_a_click() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.begin_add();
+        app.form_field = crate::models::FormField::IdentityFile;
+
+        let body = super::frames(&app, Rect::new(0, 0, 80, 24)).body;
+        let screen = screenshot::draw(&app, 80, 24);
+        let row = row_of(&screen, "~/.ssh/id_rsa");
+        let column = column_of(&screen, row, "~/.ssh/id_rsa");
+
+        assert_eq!(
+            crate::ui::popups::suggestion_at(&app, body, column, row),
+            Some(1),
+            "clicking a key should pick that key:\n{}",
+            screen
+        );
+    }
+
+    /// A host on a port that is actually listening, so the probe can find it.
+    fn reachable() -> (crate::models::SshHost, std::net::TcpListener) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let mut host = host("localbox", port);
+        host.hostname = "127.0.0.1".into();
+        (host, listener)
+    }
+
+    fn settle(done: impl Fn() -> bool) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !done() {
+            assert!(std::time::Instant::now() < deadline, "nothing settled in time");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn the_filter_is_on_screen_before_anyone_asks_for_it() {
+        let (app, _repo) = app_with(hosts(3));
+
+        let screen = screenshot::draw(&app, 80, 24);
+
+        assert!(screen.contains("Filter"), "the filter box is missing:\n{}", screen);
+        assert!(
+            screen.contains("type to narrow the list"),
+            "the empty filter says nothing:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn shutting_the_sidebar_gives_its_room_to_the_rest() {
+        let (mut app, _repo) = app_with(hosts(3));
+        let area = Rect::new(0, 0, 80, 24);
+
+        let open = super::frames(&app, area);
+        app.toggle_sidebar();
+        let shut = super::frames(&app, area);
+
+        assert!(open.sidebar.is_some(), "the sidebar starts open");
+        assert!(shut.sidebar.is_none(), "the sidebar should be gone");
+        assert!(
+            shut.main.width > open.main.width,
+            "the main pane should have taken the room: {} then {}",
+            open.main.width,
+            shut.main.width
+        );
+        assert!(!screenshot::draw(&app, 80, 24).contains("Filter"));
+    }
+
+    #[test]
+    fn a_reachable_host_gets_a_green_lamp_and_a_dead_one_a_red_lamp() {
+        let (up, _listener) = reachable();
+        let (app, _repo) = app_with(vec![up, host("dead-host", 22)]);
+
+        settle(|| !app.probes.is_working());
+
+        let screen = screenshot::draw(&app, 80, 24);
+        let buffer = screenshot::buffer(&app, 80, 24);
+        let lamp_on = |alias: &str| {
+            let row = row_of(&screen, alias);
+            let line = screen.lines().nth(row as usize).unwrap();
+            let column = line.rfind('●').expect("the card has no lamp");
+            buffer.get(line[..column].chars().count() as u16, row).style().fg
+        };
+
+        assert_eq!(
+            lamp_on("│ localbox"),
+            Some(app.theme.success.to_color()),
+            "a host that answered should be lit green:\n{}",
+            screen
+        );
+        assert_eq!(
+            lamp_on("│ dead-host"),
+            Some(app.theme.error.to_color()),
+            "a host that did not answer should be lit red:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn the_tab_row_holds_its_place_while_it_is_empty() {
+        let (app, _repo) = app_with(hosts(3));
+        let screen = screenshot::draw(&app, 100, 20);
+        let row = super::frames(&app, Rect::new(0, 0, 100, 20)).tabs.y;
+
+        assert!(
+            screen.lines().nth(row as usize).is_some_and(|line| line.contains("Tabs")),
+            "the panel should keep its title while it is empty:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn opening_the_first_tab_moves_nothing_else() {
+        let (mut app, _repo) = app_with(hosts(3));
+        let area = Rect::new(0, 0, 100, 20);
+
+        let before = super::frames(&app, area);
+        app.sessions.push(
+            crate::services::Session::spawn("server-01", "true", &[], 20, 40)
+                .expect("the pty should have started"),
+        );
+        let after = super::frames(&app, area);
+
+        assert_eq!(before.list, after.list, "the host list should not have moved");
+        assert_eq!(before.main, after.main, "the main pane should not have moved");
+        assert!(
+            screenshot::draw(&app, 100, 20).contains("server-01"),
+            "the row should be showing the tab now"
+        );
+    }
+
+    #[test]
+    fn a_session_wears_the_theme_and_flags_the_notices() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.sessions.push(
+            crate::services::Session::spawn(
+                "server-01",
+                "printf",
+                &["** WARNING: not post-quantum\nhello\n".to_string()],
+                20,
+                60,
+            )
+            .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+
+        settle(|| screenshot::draw(&app, 100, 20).contains("hello"));
+
+        let screen = screenshot::draw(&app, 100, 20);
+        let buffer = screenshot::buffer(&app, 100, 20);
+        let colour = |needle: &str| {
+            let row = row_of(&screen, needle);
+            buffer.get(column_of(&screen, row, needle), row).style().fg
+        };
+
+        assert_eq!(
+            colour("WARNING"),
+            Some(app.theme.warning.to_color()),
+            "the notice should be called out:\n{}",
+            screen
+        );
+        assert_eq!(
+            colour("hello"),
+            Some(app.theme.fg.to_color()),
+            "plain output should wear the theme:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn a_session_picks_the_shell_prompt_out() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.sessions.push(
+            crate::services::Session::spawn(
+                "server-01",
+                "printf",
+                &["[dperez@webtool02 ~]$ ls\n".to_string()],
+                20,
+                60,
+            )
+            .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+
+        settle(|| screenshot::draw(&app, 100, 20).contains("webtool02"));
+
+        let screen = screenshot::draw(&app, 100, 20);
+        let buffer = screenshot::buffer(&app, 100, 20);
+        let row = row_of(&screen, "webtool02");
+        let colour = |needle: &str| {
+            buffer.get(column_of(&screen, row, needle), row).style().fg
+        };
+
+        assert_eq!(
+            colour("dperez"),
+            Some(app.theme.accent.to_color()),
+            "the prompt should stand out:\n{}",
+            screen
+        );
+        assert_eq!(
+            colour("ls"),
+            Some(app.theme.fg.to_color()),
+            "what was typed is not part of the prompt:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn the_tabs_are_plain_until_the_slant_is_switched_on() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.sessions.push(
+            crate::services::Session::spawn("server-01", "sleep", &["5".into()], 20, 40)
+                .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+
+        let plain = screenshot::draw(&app, 100, 20);
+        assert!(!plain.contains('\u{e0be}'), "a tab should start plain:\n{}", plain);
+
+        app.toggle_tab_edges(&crate::test_support::StubThemeRepo);
+        let slanted = screenshot::draw(&app, 100, 20);
+
+        assert!(
+            slanted.contains('\u{e0be}'),
+            "the setting should put the slant back:\n{}",
+            slanted
+        );
+
+        // whichever way it is drawn, a click still lands on the tab
+        let tabs = super::frames(&app, Rect::new(0, 0, 100, 20)).tabs;
+        assert_eq!(
+            crate::ui::tabs::tab_at(
+                &app,
+                tabs,
+                column_of(&slanted, tabs.y + 1, "server-01"),
+                tabs.y + 1
+            ),
+            Some(crate::ui::tabs::TabHit::Select(0)),
+        );
+    }
+
+    #[test]
+    fn an_open_session_takes_a_tab_and_the_main_pane() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.sessions.push(
+            crate::services::Session::spawn(
+                "server-01",
+                "echo",
+                &["connected".to_string()],
+                20,
+                40,
+            )
+            .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+
+        settle(|| screenshot::draw(&app, 100, 20).contains("connected"));
+
+        let screen = screenshot::draw(&app, 100, 20);
+        let frames = super::frames(&app, Rect::new(0, 0, 100, 20));
+        let tabs = frames.tabs;
+
+        let label = tabs.y + 1;
+        assert_eq!(
+            crate::ui::tabs::tab_at(&app, tabs, column_of(&screen, label, "server-01"), label),
+            Some(crate::ui::tabs::TabHit::Select(0)),
+            "clicking the tab should pick it:\n{}",
+            screen
+        );
+        assert_eq!(
+            crate::ui::tabs::tab_at(&app, tabs, column_of(&screen, label, "×"), label),
+            Some(crate::ui::tabs::TabHit::Close(0)),
+            "clicking the cross should close it:\n{}",
+            screen
+        );
+        assert_eq!(
+            crate::ui::tabs::tab_at(&app, tabs, column_of(&screen, label, "server-01") - 2, label),
+            Some(crate::ui::tabs::TabHit::Select(0)),
+            "the slanted end belongs to its tab:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn the_connect_question_offers_both_ways_and_answers_to_clicks() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.request_connection(20, 40);
+
+        assert_eq!(app.mode, crate::models::Mode::ChooseLaunch, "asking is the default");
+
+        let body = super::frames(&app, Rect::new(0, 0, 84, 22)).body;
+        let screen = screenshot::draw(&app, 84, 22);
+        let row = row_of(&screen, "In a tab");
+
+        let filled = |screen: &str, label: &str| {
+            let row = row_of(screen, label);
+            screenshot::buffer(&app, 84, 22)
+                .get(column_of(screen, row, label), row)
+                .style()
+                .bg
+        };
+
+        assert_eq!(
+            filled(&screen, "In a tab"),
+            Some(app.theme.accent.to_color()),
+            "the answer under the cursor should be the filled one:\n{}",
+            screen
+        );
+        assert_eq!(
+            filled(&screen, "Whole terminal"),
+            Some(app.theme.input_bg.to_color()),
+            "the other answer should sit back on its own surface:\n{}",
+            screen
+        );
+        assert_eq!(
+            crate::ui::popups::launch_button_at(body, column_of(&screen, row, "In a tab"), row),
+            Some(crate::ui::popups::LaunchButton::Tab),
+            "the tab button is not where it is drawn:\n{}",
+            screen
+        );
+        assert_eq!(
+            crate::ui::popups::launch_button_at(body, column_of(&screen, row, "Whole terminal"), row),
+            Some(crate::ui::popups::LaunchButton::FullScreen),
+            "the full screen button is not where it is drawn:\n{}",
+            screen
+        );
+
+        app.launch_cursor_right();
+        let moved = screenshot::draw(&app, 84, 22);
+        let row = row_of(&moved, "Whole terminal");
+        let buffer = screenshot::buffer(&app, 84, 22);
+
+        assert_eq!(
+            buffer.get(column_of(&moved, row, "Whole terminal"), row).style().bg,
+            Some(app.theme.accent.to_color()),
+            "the arrows should move the fill:\n{}",
+            moved
+        );
+    }
+
+    #[test]
+    fn the_settings_rows_answer_to_clicks() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.open_settings();
+
+        let body = super::frames(&app, Rect::new(0, 0, 84, 22)).body;
+        let screen = screenshot::draw(&app, 84, 22);
+
+        for (label, index) in [
+            ("Take the whole terminal", 2),
+            ("Theme", 3),
+            ("Transparency", 4),
+            ("Slanted tabs", 5),
+            ("Tabs in a panel", 6),
+        ] {
+            assert_eq!(
+                crate::ui::popups::setting_at(body, 40, row_of(&screen, label)),
+                Some(index),
+                "'{}' is not where it is drawn:\n{}",
+                label,
+                screen
+            );
+        }
+    }
+
+    #[test]
+    fn the_bottom_bar_carries_what_the_header_used_to() {
+        let (app, _repo) = app_with(hosts(3));
+
+        let screen = screenshot::draw(&app, 100, 12);
+        let top = screen.lines().next().expect("a screen has rows");
+        let bottom = screen.lines().last().expect("a screen has rows");
+
+        assert!(top.contains("Tabs"), "the tab panel should be at the top now:\n{}", screen);
+        assert!(bottom.contains("NORMAL"), "the bar lost its mode:\n{}", screen);
+        assert!(bottom.contains("? help"), "the bar lost its hints:\n{}", screen);
+        assert!(bottom.contains(".ssh/config"), "the bar lost the config path:\n{}", screen);
+        assert!(bottom.contains("3 hosts"), "the bar lost the host count:\n{}", screen);
+    }
+
+    #[test]
+    fn the_tabs_can_step_out_of_their_panel() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.sessions.push(
+            crate::services::Session::spawn("server-01", "sleep", &["5".into()], 20, 40)
+                .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+
+        let framed = screenshot::draw(&app, 100, 20);
+        assert!(framed.contains("╭ Tabs"), "the tabs start in a panel:\n{}", framed);
+
+        app.toggle_tab_panel(&crate::test_support::StubThemeRepo);
+        let bare = screenshot::draw(&app, 100, 20);
+
+        assert!(!bare.contains("╭ Tabs"), "the panel should be gone:\n{}", bare);
+        assert!(bare.contains("tabs"), "the label takes its place:\n{}", bare);
+
+        // whichever way the row is drawn, a click still lands on the tab
+        let tabs = super::frames(&app, Rect::new(0, 0, 100, 20)).tabs;
+        assert_eq!(
+            crate::ui::tabs::tab_at(&app, tabs, column_of(&bare, tabs.y, "server-01"), tabs.y),
+            Some(crate::ui::tabs::TabHit::Select(0)),
+            "a bare row should still answer to clicks:\n{}",
+            bare
+        );
+    }
+
+    #[test]
+    fn a_click_picks_the_card_it_lands_on() {
+        let (mut app, _repo) = app_with(hosts(40));
+        app.jump_to_bottom();
+
+        let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
+        let screen = screenshot::draw(&app, 80, 24);
+        let drawn = alias_rows(&screen);
+        assert!(drawn.len() > 2, "expected a panel full of cards:\n{}", screen);
+
+        for (row, index) in drawn {
+            assert_eq!(
+                crate::ui::panels::host_at(&app, list, list.x + 2, row),
+                Some(index),
+                "clicking row {} should pick server-{:02}:\n{}",
+                row,
+                index + 1,
+                screen
+            );
+        }
+    }
+
+    #[test]
+    fn a_click_on_empty_space_picks_nothing() {
+        let (app, _repo) = app_with(hosts(2));
+
+        let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
+
+        assert_eq!(
+            crate::ui::panels::host_at(&app, list, list.x + 2, list.bottom() - 2),
+            None,
+            "the space below the last card is not a host"
+        );
+        assert_eq!(
+            crate::ui::panels::host_at(&app, list, list.right() + 4, list.y + 2),
+            None,
+            "the details panel is not the host list"
+        );
+    }
+
+    #[test]
+    fn the_selected_card_is_the_one_in_the_accent_colour() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.move_cursor_down();
+
+        let screen = screenshot::draw(&app, 80, 24);
+        let buffer = screenshot::buffer(&app, 80, 24);
+        let list = super::frames(&app, Rect::new(0, 0, 80, 24)).list;
+
+        let edge_of = |alias: &str| {
+            let row = row_of(&screen, alias) - 1;
+            buffer.get(list.x + 2, row).style().fg
+        };
+
+        assert_eq!(
+            edge_of("│ server-02"),
+            Some(app.theme.accent.to_color()),
+            "the selected card should be drawn in the accent colour:\n{}",
+            screen
+        );
+        assert_eq!(
+            edge_of("│ server-01"),
+            Some(app.theme.border.to_color()),
+            "an unselected card should keep the plain border:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn a_host_is_drawn_as_a_boxed_card() {
+        let (app, _repo) = app_with(hosts(3));
+
+        let screen = screenshot::draw(&app, 80, 24);
+        let lines: Vec<&str> = screen.lines().collect();
+        let top = lines
+            .iter()
+            .position(|line| line.contains("│ server-01"))
+            .unwrap_or_else(|| panic!("the card is missing:\n{}", screen));
+
+        assert!(lines[top - 1].contains("╭──"), "the card has no top edge:\n{}", screen);
+        assert!(
+            lines[top + 1].contains("dperez@server-01.example.com"),
+            "the card is missing its detail line:\n{}",
+            screen
+        );
+        assert!(lines[top + 2].contains("╰──"), "the card has no bottom edge:\n{}", screen);
+    }
+
+    #[test]
+    fn a_custom_port_and_a_key_sit_beside_the_host() {
+        let mut list = hosts(2);
+        list[0].port = 2222;
+        list[0].identity_file = "~/.ssh/id_ed25519".into();
+
+        let (app, _repo) = app_with(list);
+        let screen = screenshot::draw(&app, 80, 24);
+        let lines: Vec<&str> = screen.lines().collect();
+        let top = lines
+            .iter()
+            .position(|line| line.contains("│ server-01"))
+            .unwrap_or_else(|| panic!("the card is missing:\n{}", screen));
+
+        assert!(lines[top].contains(":2222"), "the port badge is missing:\n{}", screen);
+        assert!(lines[top + 1].contains("id_ed25519"), "the key is missing:\n{}", screen);
+    }
+
+    #[test]
+    fn an_empty_config_says_what_to_press() {
+        let (app, _repo) = app_with(vec![]);
+
+        let screen = screenshot::draw(&app, 80, 24);
+
+        assert!(screen.contains("No hosts yet"), "empty state is missing:\n{}", screen);
+        assert!(screen.contains("Press 'a' to add"), "the way forward is missing:\n{}", screen);
+    }
+
+    #[test]
+    fn the_selected_host_stays_on_screen_in_a_long_list() {
+        let (mut app, _repo) = app_with(hosts(40));
+        app.jump_to_bottom();
+
+        let screen = screenshot::draw(&app, 80, 24);
+
+        assert!(screen.contains("│ server-40"), "selection scrolled out of view:\n{}", screen);
+    }
+
+    #[test]
+    fn the_form_shows_every_field_on_a_small_terminal() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.begin_add();
+
+        let screen = screenshot::draw(&app, 80, 24);
+
+        for label in ["Host Alias", "HostName", "Port", "User", "IdentityFile"] {
+            assert!(screen.contains(label), "form is missing '{}':\n{}", label, screen);
+        }
+        assert!(screen.contains("Esc cancel"), "form is missing its footer:\n{}", screen);
+    }
+
+    #[test]
+    fn the_form_scrolls_to_the_field_being_edited() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.begin_add();
+        app.form_field = crate::models::FormField::IdentityFile;
+
+        let screen = screenshot::draw(&app, 40, 12);
+
+        assert!(screen.contains("IdentityFile"), "active field is off screen:\n{}", screen);
+    }
+
+    #[test]
+    fn the_help_fits_a_small_terminal() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.open_help();
+
+        let screen = screenshot::draw(&app, 74, 20);
+
+        assert!(screen.contains("closes this help"), "help is clipped:\n{}", screen);
+        assert!(screen.contains("MOVE AROUND"), "help has lost its groups:\n{}", screen);
+        assert!(
+            screen.contains("show the ssh command"),
+            "the last group is cut off:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn an_active_filter_is_visible_once_the_search_bar_closes() {
+        let (mut app, _repo) = app_with(hosts(20));
+        app.enter_search();
+        for c in "server-1".chars() {
+            app.search_type(c);
+        }
+        app.finish_search();
+
+        let screen = screenshot::draw(&app, 80, 24);
+
+        assert!(screen.contains("10/20"), "filter counts are missing:\n{}", screen);
+        assert!(screen.contains("server-1'"), "filter query is missing:\n{}", screen);
+    }
+
+    #[test]
+    fn the_status_bar_keeps_the_way_out_on_a_narrow_terminal() {
+        let (mut app, _repo) = app_with(hosts(20));
+
+        assert!(screenshot::draw(&app, 50, 18).contains("? help"));
+
+        app.begin_add();
+        assert!(screenshot::draw(&app, 50, 18).contains("Esc cancel"));
+    }
 }
