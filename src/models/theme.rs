@@ -140,6 +140,8 @@ pub struct ThemePreference {
     pub tab_edges: bool,
     #[serde(default = "yes")]
     pub tab_panel: bool,
+    #[serde(default = "yes")]
+    pub connecting: bool,
 }
 
 fn yes() -> bool {
@@ -158,6 +160,7 @@ impl Default for ThemePreference {
             launch_style: LaunchStyle::Ask,
             tab_edges: false,
             tab_panel: true,
+            connecting: true,
         }
     }
 }
