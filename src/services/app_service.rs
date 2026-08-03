@@ -518,6 +518,27 @@ impl AppService {
         }
     }
 
+    /// Closes the tabs that have nothing left to say. A session you logged out
+    /// of goes away on its own, and one that failed stays put so the reason it
+    /// printed can still be read.
+    pub fn reap_finished_sessions(&mut self) {
+        let mut closed = Vec::new();
+        let mut index = 0;
+
+        while index < self.sessions.len() {
+            if self.sessions[index].ended_cleanly() {
+                closed.push(self.sessions[index].alias.clone());
+                self.close_tab(index);
+            } else {
+                index += 1;
+            }
+        }
+
+        for alias in closed {
+            self.toast(Toast::success(format!("'{}' disconnected", alias)));
+        }
+    }
+
     pub fn close_active_tab(&mut self) {
         if let Some(index) = self.active_tab {
             self.close_tab(index);
@@ -1140,5 +1161,58 @@ mod tests {
 
         assert_eq!(app.host_count(), 1);
         assert_eq!(app.mode, Mode::AddHost);
+    }
+
+    /// Runs a process in a tab of its own and waits for it to be over, which
+    /// is what logging out of a session looks like from here.
+    fn tab_running(app: &mut AppService, alias: &str, program: &str) {
+        let session = Session::spawn(alias, program, &[], 20, 40).expect("the pty should start");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while session.is_running() {
+            assert!(std::time::Instant::now() < deadline, "the session never finished");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        app.sessions.push(session);
+        app.select_tab(app.sessions.len() - 1);
+    }
+
+    #[test]
+    fn a_session_that_logged_out_closes_its_own_tab() {
+        let (mut app, _repo) = app_with(vec![host("box", 22)]);
+        tab_running(&mut app, "box", "true");
+
+        app.reap_finished_sessions();
+
+        assert!(app.sessions.is_empty());
+        assert_eq!(app.active_tab, None);
+        assert_eq!(app.focus, Focus::Sidebar);
+    }
+
+    #[test]
+    fn a_session_that_failed_keeps_its_tab_so_it_can_be_read() {
+        let (mut app, _repo) = app_with(vec![host("box", 22)]);
+        tab_running(&mut app, "box", "false");
+
+        app.reap_finished_sessions();
+
+        assert_eq!(app.sessions.len(), 1);
+        assert_eq!(app.active_tab, Some(0));
+    }
+
+    #[test]
+    fn reaping_leaves_the_tabs_that_are_still_going() {
+        let (mut app, _repo) = app_with(vec![host("box", 22)]);
+        tab_running(&mut app, "gone", "true");
+        app.sessions.push(
+            Session::spawn("busy", "sleep", &["5".to_string()], 20, 40).expect("the pty starts"),
+        );
+
+        app.reap_finished_sessions();
+
+        assert_eq!(app.sessions.len(), 1);
+        assert_eq!(app.sessions[0].alias, "busy");
+        assert_eq!(app.active_tab, Some(0));
     }
 }

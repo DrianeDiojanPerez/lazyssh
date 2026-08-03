@@ -102,6 +102,10 @@ fn run_tui(
     let mut clicks = input::Clicks::default();
 
     let action = loop {
+        // INFO: a session that has logged out is closed before the frame it
+        // would have been drawn in, so the tab goes as soon as it is done
+        app.reap_finished_sessions();
+
         // INFO: the pty is told the size of the pane before it is drawn, so
         // the remote end lays out for the space it actually has
         let area = terminal.size()?;
