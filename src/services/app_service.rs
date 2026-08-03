@@ -137,6 +137,10 @@ impl AppService {
         self.hosts.get(index)
     }
 
+    pub fn host_named(&self, alias: &str) -> Option<&SshHost> {
+        self.hosts.iter().find(|host| host.alias == alias)
+    }
+
     pub fn move_cursor_up(&mut self) {
         if self.cursor > 0 {
             self.cursor -= 1;
