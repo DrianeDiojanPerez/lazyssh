@@ -442,6 +442,48 @@ mod tests {
     }
 
     #[test]
+    fn a_session_says_it_is_connecting_until_the_far_end_speaks() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.sessions.push(
+            crate::services::Session::spawn("server-01", "sleep", &["5".into()], 20, 40)
+                .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+
+        let waiting = screenshot::draw(&app, 100, 20);
+        assert!(
+            waiting.contains("Connecting to server-01.example.com…"),
+            "the pane should say what it is waiting for:\n{}",
+            waiting
+        );
+
+        std::thread::sleep(Duration::from_millis(150));
+        let turned = screenshot::draw(&app, 100, 20);
+        assert_ne!(
+            waiting, turned,
+            "the mark should be turning while the wait goes on:\n{}",
+            turned
+        );
+    }
+
+    #[test]
+    fn the_wait_gives_way_to_whatever_the_session_prints() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.sessions.push(
+            crate::services::Session::spawn("server-01", "echo", &["ready".into()], 20, 40)
+                .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+
+        settle(|| screenshot::draw(&app, 100, 20).contains("ready"));
+
+        assert!(
+            !screenshot::draw(&app, 100, 20).contains("Connecting to"),
+            "the wait should be over once there is something to show"
+        );
+    }
+
+    #[test]
     fn a_session_wears_the_theme_and_flags_the_notices() {
         let (mut app, _repo) = app_with(hosts(3));
         app.sessions.push(
@@ -1087,6 +1129,7 @@ mod tests {
     }
 
 }
+
 
 
 

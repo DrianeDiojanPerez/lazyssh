@@ -1,8 +1,8 @@
 use ratatui::{
-    layout::Rect,
+    layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
-    text::Span,
-    widgets::{Block, BorderType, Borders},
+    text::{Line, Span},
+    widgets::{Block, BorderType, Borders, Paragraph},
     Frame,
 };
 
@@ -29,6 +29,11 @@ pub fn draw(frame: &mut Frame, app: &AppService, session: &Session, area: Rect) 
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
+
+    if session.is_running() && !session.has_spoken() {
+        draw_waiting(frame, app, session, inner);
+        return;
+    }
 
     let Ok(parser) = session.screen.lock() else {
         return;
@@ -70,6 +75,30 @@ pub fn draw(frame: &mut Frame, app: &AppService, session: &Session, area: Rect) 
             frame.set_cursor(inner.x + column, inner.y + row);
         }
     }
+}
+
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// A turning mark while ssh is off resolving, connecting and agreeing on keys,
+/// which is time the pane would otherwise sit empty and look broken. It is
+/// worked out from the clock rather than a counter, so nothing has to be
+/// stepped along to keep it moving.
+fn draw_waiting(frame: &mut Frame, app: &AppService, session: &Session, area: Rect) {
+    let t = &app.theme;
+    let frames = (session.waiting_for().as_millis() / 100) as usize;
+
+    let target = app
+        .host_named(&session.alias)
+        .map(|host| host.display_host().to_string())
+        .unwrap_or_else(|| session.alias.clone());
+
+    let line = Line::from(vec![
+        Span::styled(SPINNER[frames % SPINNER.len()], Style::default().fg(t.warning.to_color())),
+        Span::styled(format!(" Connecting to {}…", target), t.muted()),
+    ]);
+
+    let row = Rect { y: area.y + area.height / 3, height: 1, ..area };
+    frame.render_widget(Paragraph::new(line).alignment(Alignment::Center), row);
 }
 
 /// A line the remote wrote in plain text, opening with a star: ssh's banner
