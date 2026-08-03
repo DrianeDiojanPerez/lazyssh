@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use ratatui::{
     layout::{Alignment, Rect},
     style::{Modifier, Style},
@@ -7,7 +9,7 @@ use ratatui::{
 };
 
 use crate::models::{FormField, Setting};
-use crate::services::{AppService, Session};
+use crate::services::AppService;
 
 fn centered(width: u16, height: u16, area: Rect) -> Rect {
     let width = width.min(area.width);
@@ -24,16 +26,23 @@ fn centered(width: u16, height: u16, area: Rect) -> Rect {
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /// What is on screen while ssh is off resolving, connecting and agreeing on
-/// keys. It sits over the host it is connecting to rather than taking the pane,
-/// so there is still something to read while the wait goes on. The mark is
-/// worked out from the clock, so nothing has to be stepped along to turn it.
-pub fn draw_connecting(frame: &mut Frame, app: &AppService, session: &Session, body: Rect) {
+/// keys, whether the session is being made in a tab or the terminal is about to
+/// be handed over. It sits over what was already there rather than taking the
+/// screen, so there is still something to read while the wait goes on. The mark
+/// is worked out from the clock, so nothing has to be stepped along to turn it.
+pub fn draw_connecting(
+    frame: &mut Frame,
+    app: &AppService,
+    alias: &str,
+    waited: Duration,
+    body: Rect,
+) {
     let t = &app.theme;
 
     let target = app
-        .host_named(&session.alias)
+        .host_named(alias)
         .map(|host| host.display_host().to_string())
-        .unwrap_or_else(|| session.alias.clone());
+        .unwrap_or_else(|| alias.to_string());
 
     let said = format!("Connecting to {}…", target);
     let area = centered(said.chars().count() as u16 + 12, 5, body);
@@ -43,12 +52,12 @@ pub fn draw_connecting(frame: &mut Frame, app: &AppService, session: &Session, b
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(t.accent())
-        .title(Span::styled(format!(" {} ", session.alias), t.title()))
+        .title(Span::styled(format!(" {} ", alias), t.title()))
         .title_alignment(Alignment::Center)
         .padding(Padding::new(2, 2, 1, 0))
         .style(t.base());
 
-    let turn = (session.waiting_for().as_millis() / 100) as usize;
+    let turn = (waited.as_millis() / 100) as usize;
     let line = Line::from(vec![
         Span::styled(SPINNER[turn % SPINNER.len()], Style::default().fg(t.warning.to_color())),
         Span::styled(format!(" {}", said), t.muted()),
@@ -649,7 +658,7 @@ fn choice<'a>(label: &'a str, is_picked: bool, t: &crate::models::Theme) -> Span
 }
 
 fn settings_area(body: Rect) -> Rect {
-    centered(56, 15, body)
+    centered(56, 16, body)
 }
 
 pub fn setting_at(body: Rect, column: u16, row: u16) -> Option<usize> {
@@ -682,7 +691,7 @@ pub fn draw_settings(frame: &mut Frame, app: &AppService, body: Rect) {
 
     // INFO: rows are placed by the same line numbers the mouse looks them up
     // by, so a click can never land a row away from what it points at
-    let mut lines = vec![Line::from(""); 12];
+    let mut lines = vec![Line::from(""); 13];
     lines[0] = Line::from(Span::styled("When you connect to a host", t.muted()));
     lines[5] = Line::from(Span::styled("Look", t.muted()));
 
@@ -695,6 +704,7 @@ pub fn draw_settings(frame: &mut Frame, app: &AppService, body: Rect) {
             Setting::Transparency => on_or_off(app.theme.transparent),
             Setting::TabEdges => on_or_off(app.tab_edges()),
             Setting::TabPanel => on_or_off(app.tab_panel()),
+            Setting::Connecting => on_or_off(app.wants_connecting_screen()),
         };
 
         let label = setting.label();

@@ -67,6 +67,12 @@ pub fn frames(app: &AppService, area: Rect) -> Frames {
     }
 }
 
+/// Whether a session is still being made, which is only worth saying while the
+/// setting for it is on.
+fn waiting_on(app: &AppService, session: &crate::services::Session) -> bool {
+    app.wants_connecting_screen() && session.is_connecting()
+}
+
 pub fn render(frame: &mut Frame, app: &AppService) {
     let area = frame.size();
 
@@ -83,7 +89,7 @@ pub fn render(frame: &mut Frame, app: &AppService) {
 
     // INFO: a session being made has nothing to paint yet, so the host it is
     // being made to stays on screen and the waiting is said over the top
-    match app.active_session().filter(|session| !session.is_connecting()) {
+    match app.active_session().filter(|session| !waiting_on(app, session)) {
         Some(session) => session::draw(frame, app, session, frames.main),
         None => panels::draw_detail_panel(frame, app, frames.main),
     }
@@ -92,8 +98,11 @@ pub fn render(frame: &mut Frame, app: &AppService) {
     // the very corner rather than starting where the details do
     toasts::draw(frame, app, area);
 
-    if let Some(session) = app.active_session().filter(|session| session.is_connecting()) {
-        popups::draw_connecting(frame, app, session, area);
+    if let Some(session) = app.active_session().filter(|session| waiting_on(app, session)) {
+        popups::draw_connecting(frame, app, &session.alias, session.waiting_for(), area);
+    }
+    if let Some(held) = &app.launching {
+        popups::draw_connecting(frame, app, &held.alias, held.waiting_for(), area);
     }
 
     let body = frames.body;
@@ -743,6 +752,27 @@ mod tests {
     }
 
     #[test]
+    fn the_wait_can_be_switched_off_in_the_settings() {
+        let (mut app, _repo) = app_with(hosts(3));
+        app.sessions.push(
+            crate::services::Session::spawn("server-01", "sleep", &["5".into()], 20, 40)
+                .expect("the pty should have started"),
+        );
+        app.select_tab(0);
+
+        assert!(screenshot::draw(&app, 100, 20).contains("Connecting to"));
+
+        app.toggle_connecting_screen(&crate::test_support::StubThemeRepo);
+        let straight = screenshot::draw(&app, 100, 20);
+
+        assert!(
+            !straight.contains("Connecting to"),
+            "the wait should be gone once it is switched off:\n{}",
+            straight
+        );
+    }
+
+    #[test]
     fn the_settings_rows_answer_to_clicks() {
         let (mut app, _repo) = app_with(hosts(3));
         app.open_settings();
@@ -756,6 +786,7 @@ mod tests {
             ("Transparency", 4),
             ("Slanted tabs", 5),
             ("Tabs in a panel", 6),
+            ("Connecting screen", 7),
         ] {
             assert_eq!(
                 crate::ui::popups::setting_at(body, 40, row_of(&screen, label)),
@@ -1180,6 +1211,7 @@ mod tests {
     }
 
 }
+
 
 
 
