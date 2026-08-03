@@ -59,7 +59,13 @@ lazyssh --help
 
 ## Updating
 
-To update to the latest version, just run the installation command again:
+```bash
+lazyssh --update
+```
+
+It fetches the installer and runs it, so it lands the same way it was installed.
+
+Or run the installation command again by hand:
 
 ```bash
 # Linux/macOS
