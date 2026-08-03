@@ -92,10 +92,8 @@ pub fn render(frame: &mut Frame, app: &AppService) {
     // the very corner rather than starting where the details do
     toasts::draw(frame, app, area);
 
-    // INFO: this one belongs to the pane rather than to the screen, so it is
-    // centred on the host it is connecting to and leaves the list alone
     if let Some(session) = app.active_session().filter(|session| session.is_connecting()) {
-        popups::draw_connecting(frame, app, session, frames.main);
+        popups::draw_connecting(frame, app, session, area);
     }
 
     let body = frames.body;
@@ -469,10 +467,18 @@ mod tests {
             "the host being connected to should still be readable:\n{}",
             waiting
         );
-        assert!(
-            waiting.contains("Hosts 3"),
-            "the list should be left alone:\n{}",
-            waiting
+
+        // whether it is centred on the screen or on the pane only shows once
+        // the pane changes size under it
+        let column = column_of(&waiting, row_of(&waiting, "Connecting to"), "Connecting to");
+        app.toggle_sidebar();
+        let wider = screenshot::draw(&app, 100, 20);
+
+        assert_eq!(
+            column_of(&wider, row_of(&wider, "Connecting to"), "Connecting to"),
+            column,
+            "the wait should hold the middle of the screen:\n{}",
+            wider
         );
 
         std::thread::sleep(Duration::from_millis(150));
@@ -1174,6 +1180,7 @@ mod tests {
     }
 
 }
+
 
 
 
