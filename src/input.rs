@@ -192,15 +192,15 @@ fn on_mouse(
         }
 
         // INFO: the pointer resting on a card is enough to say which host is
-        // wanted, so the details follow it around. Nothing is opened until it
-        // is actually clicked, and an open session keeps hold of the app until
-        // the list is clicked into: the console is the window being worked in,
-        // and the pointer crossing it should not drag everything away
-        (Mode::Normal | Mode::Search, MouseEventKind::Moved)
-            if !app.is_launching() && !app.is_session_focused() =>
-        {
+        // wanted, so the list takes the focus and the details follow it around
+        // without waiting to be clicked. A session keeps running behind it and
+        // takes the keys back the moment its pane is pointed at
+        (Mode::Normal | Mode::Search, MouseEventKind::Moved) if !app.is_launching() => {
             if let Some(index) = panels::host_at(app, frames.list, column, row) {
+                app.focus_sidebar();
                 app.select(index);
+            } else if within(frames.main, column, row) {
+                app.focus_session();
             }
             return Ok(());
         }
@@ -283,6 +283,11 @@ fn on_mouse(
 
 fn ok(_: ()) -> std::io::Result<()> {
     Ok(())
+}
+
+/// The whole of a rectangle, rather than the one row `hits` looks at.
+fn within(rect: Rect, column: u16, row: u16) -> bool {
+    column >= rect.x && column < rect.right() && row >= rect.y && row < rect.bottom()
 }
 
 fn hits(rect: Rect, column: u16, row: u16) -> bool {
