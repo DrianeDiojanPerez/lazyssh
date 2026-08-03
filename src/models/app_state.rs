@@ -96,12 +96,18 @@ impl FormField {
             Self::Port => "default 22",
             Self::User => "login username",
             Self::IdentityFile => "path to key (optional)",
-            Self::Options => "Name Value; Name Value",
+            Self::Options => "one to a line",
         }
     }
 
     pub fn is_required(&self) -> bool {
         matches!(self, Self::Alias | Self::HostName)
+    }
+
+    /// Whether the field holds a list rather than a value, which is what makes
+    /// Enter add a line to it instead of saving the form.
+    pub fn is_multiline(&self) -> bool {
+        matches!(self, Self::Options)
     }
 
     pub fn accepts_char(&self, c: char) -> bool {
