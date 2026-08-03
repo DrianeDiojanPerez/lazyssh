@@ -899,6 +899,111 @@ mod tests {
     }
 
     #[test]
+    fn the_detail_panel_reads_like_the_config_file() {
+        let (app, _repo) = app_with(hosts(3));
+
+        let screen = screenshot::draw(&app, 100, 26);
+
+        assert!(
+            screen.contains(".ssh/config › server-01"),
+            "the breadcrumb is missing:\n{}",
+            screen
+        );
+
+        for (number, text) in [
+            (1, "Host server-01"),
+            (2, "HostName server-01.example.com"),
+            (3, "Port 22"),
+            (4, "User dperez"),
+            (5, "IdentityFile (default)"),
+        ] {
+            assert!(
+                screen.contains(&format!("{} │ {}", number, text)),
+                "line {} should read '{}':\n{}",
+                number,
+                text,
+                screen
+            );
+        }
+
+        assert!(screen.contains("↵ connect"), "the panel lost its hints:\n{}", screen);
+    }
+
+    #[test]
+    fn the_config_block_colours_the_keywords_by_where_they_came_from() {
+        let mut list = hosts(2);
+        list[0].extra_options = vec![("SetEnv".into(), "TERM=xterm-256color".into())];
+
+        let (app, _repo) = app_with(list);
+        let screen = screenshot::draw(&app, 100, 26);
+        let buffer = screenshot::buffer(&app, 100, 26);
+        let colour = |needle: &str| {
+            let row = row_of(&screen, needle);
+            buffer.get(column_of(&screen, row, needle), row).style().fg
+        };
+
+        assert_eq!(
+            colour("Host server-01"),
+            Some(app.theme.accent_secondary.to_color()),
+            "the block header should stand apart:\n{}",
+            screen
+        );
+        assert_eq!(
+            colour("HostName"),
+            Some(app.theme.accent.to_color()),
+            "a field the form knows should wear the accent:\n{}",
+            screen
+        );
+        assert_eq!(
+            colour("SetEnv"),
+            Some(app.theme.warning.to_color()),
+            "a hand written option should be called out:\n{}",
+            screen
+        );
+    }
+
+    #[test]
+    fn the_command_card_goes_away_without_taking_the_config_with_it() {
+        let (mut app, _repo) = app_with(hosts(3));
+
+        let shown = screenshot::draw(&app, 100, 26);
+        assert!(shown.contains("$ ssh server-01"), "the command card is missing:\n{}", shown);
+
+        app.toggle_command_preview();
+        let hidden = screenshot::draw(&app, 100, 26);
+
+        assert!(!hidden.contains("$ ssh server-01"), "the card should be gone:\n{}", hidden);
+        assert!(
+            hidden.contains("Host server-01"),
+            "the config block should have stayed:\n{}",
+            hidden
+        );
+    }
+
+    #[test]
+    fn the_command_card_says_what_the_probe_found() {
+        let (up, _listener) = reachable();
+        let (mut app, _repo) = app_with(vec![up, host("dead-host", 22)]);
+
+        settle(|| !app.probes.is_working());
+
+        let answered = screenshot::draw(&app, 100, 26);
+        assert!(
+            answered.contains("✓ reachable at dperez@127.0.0.1"),
+            "a host that answered should say so:\n{}",
+            answered
+        );
+
+        app.move_cursor_down();
+        let silent = screenshot::draw(&app, 100, 26);
+        assert!(
+            silent.contains("✗ no answer from dead-host.example.com:22"),
+            "a host that did not answer should say so:\n{}",
+            silent
+        );
+    }
+
+    #[test]
     fn the_status_bar_keeps_the_way_out_on_a_narrow_terminal() {
         let (mut app, _repo) = app_with(hosts(20));
 
@@ -908,3 +1013,6 @@ mod tests {
         assert!(screenshot::draw(&app, 50, 18).contains("Esc cancel"));
     }
 }
+
+
+

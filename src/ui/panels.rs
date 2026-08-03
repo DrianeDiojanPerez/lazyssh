@@ -1,17 +1,24 @@
 use crossterm::event::KeyCode;
 use ratatui::{
-    layout::{Alignment, Constraint, Margin, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{
         Block, BorderType, Borders, Cell, Padding, Paragraph, Row, Scrollbar,
-        ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
+        ScrollbarOrientation, ScrollbarState, Table, TableState,
     },
     Frame,
 };
 
-use crate::models::{Mode, Reachability, SshHost};
+use crate::models::{Mode, Reachability, Rgb, SshHost};
 use crate::services::AppService;
+
+/// Colour without a background, for anything drawn on top of a surface that
+/// has already been filled: the theme's own styles carry the page background
+/// and would punch a hole through the card they sit in.
+fn ink(color: &Rgb) -> Style {
+    Style::default().fg(color.to_color())
+}
 
 pub fn draw_search_bar(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
@@ -158,6 +165,17 @@ pub fn draw_host_list(frame: &mut Frame, app: &AppService, area: Rect) {
     }
 }
 
+fn lamp_for(app: &AppService, host: &SshHost) -> (&'static str, Style) {
+    let t = &app.theme;
+
+    match app.probes.status(&host.alias) {
+        Reachability::Online => ("●", ink(&t.success)),
+        Reachability::Offline => ("●", ink(&t.error)),
+        Reachability::Checking => ("◌", ink(&t.muted)),
+        Reachability::Unknown => ("○", ink(&t.muted)),
+    }
+}
+
 fn key_name(host: &SshHost) -> &str {
     if !host.has_identity_file() {
         return "";
@@ -191,12 +209,7 @@ fn card<'a>(app: &AppService, is_selected: bool, host: &SshHost, width: usize) -
         .then(|| Span::styled(format!(" :{} ", host.port), t.pill(&t.accent_secondary)));
     let key = key_name(host);
 
-    let (lamp, lamp_style) = match app.probes.status(&host.alias) {
-        Reachability::Online => ("●", t.success_dot()),
-        Reachability::Offline => ("●", t.error()),
-        Reachability::Checking => ("◌", t.muted()),
-        Reachability::Unknown => ("○", t.muted()),
-    };
+    let (lamp, lamp_style) = lamp_for(app, host);
 
     let mut head: Vec<Span> = Vec::new();
     if let Some(port) = port {
@@ -285,68 +298,208 @@ fn draw_placeholder(frame: &mut Frame, app: &AppService, block: Block, area: Rec
 }
 
 pub fn draw_detail_panel(frame: &mut Frame, app: &AppService, area: Rect) {
-    let t = &app.theme;
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(t.border())
-        .title(Span::styled(" Details ", t.title()))
-        .padding(Padding::new(2, 2, 1, 0))
-        .style(t.base());
-
     let Some(host) = app.selected_host() else {
+        let block = Block::default().padding(Padding::new(2, 2, 1, 0)).style(app.theme.base());
         draw_placeholder(frame, app, block, area, "Nothing selected", "Pick a host on the left");
         return;
     };
 
-    let value = t.base();
-    let dim = t.muted();
+    let inner = area.inner(&Margin { horizontal: 2, vertical: 1 });
+    if inner.width < 12 || inner.height < 3 {
+        return;
+    }
+
+    // INFO: the card is the first thing to go on a short pane, since the block
+    // under it is what the panel is actually for
+    let wanted = if app.show_command { command_height(app, host) } else { 0 };
+    let command = if inner.height >= wanted + 8 { wanted } else { 0 };
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(command),
+            Constraint::Length(if command > 0 { 1 } else { 0 }),
+            Constraint::Min(3),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let width = inner.width as usize;
+
+    frame.render_widget(Paragraph::new(breadcrumb(app, host, width)), rows[0]);
+    if command > 0 {
+        draw_command_card(frame, app, host, rows[2]);
+    }
+    draw_config_card(frame, app, host, rows[4]);
+    frame.render_widget(Paragraph::new(detail_hints(app, width)), rows[6]);
+}
+
+/// Where the host sits: the file it was read out of, then the host itself,
+/// with the same lamp its card in the list wears. The host is the point of the
+/// line, so the file is what gives way when the two will not fit.
+fn breadcrumb<'a>(app: &AppService, host: &SshHost, width: usize) -> Line<'a> {
+    let t = &app.theme;
+    let (lamp, lamp_style) = lamp_for(app, host);
+    let path = app.config_path_display();
+
+    let mut spans = vec![Span::styled(lamp, lamp_style), Span::styled(" ", t.base())];
+
+    if 2 + path.chars().count() + 3 + host.alias.chars().count() <= width {
+        spans.push(Span::styled(path, t.muted()));
+        spans.push(Span::styled(" › ", t.border()));
+    }
+
+    spans.push(Span::styled(
+        ellipsize(&host.alias, width.saturating_sub(2)),
+        t.title(),
+    ));
+    Line::from(spans)
+}
+
+/// The surface both cards are drawn on, a shade off the panel behind them.
+fn card_block(app: &AppService) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(ink(&app.theme.border))
+        .padding(Padding::new(1, 1, 0, 0))
+        .style(app.theme.input())
+}
+
+fn command_height(app: &AppService, host: &SshHost) -> u16 {
+    match reach_line(app, host) {
+        Some(_) => 4,
+        None => 3,
+    }
+}
+
+/// What the probe found, said in words under the command. Nothing is said
+/// while the host has not been asked yet.
+fn reach_line(app: &AppService, host: &SshHost) -> Option<(&'static str, String, Style)> {
+    let t = &app.theme;
+
+    match app.probes.status(&host.alias) {
+        Reachability::Online => Some(("✓", format!("reachable at {}", target(host)), ink(&t.success))),
+        Reachability::Offline => Some((
+            "✗",
+            format!("no answer from {}:{}", host.display_host(), host.port),
+            ink(&t.error),
+        )),
+        Reachability::Checking => {
+            Some(("◌", format!("checking {}…", host.display_host()), ink(&t.warning)))
+        }
+        Reachability::Unknown => None,
+    }
+}
+
+fn target(host: &SshHost) -> String {
+    if host.user.is_empty() {
+        return host.display_host().to_string();
+    }
+    format!("{}@{}", host.user, host.display_host())
+}
+
+fn draw_command_card(frame: &mut Frame, app: &AppService, host: &SshHost, area: Rect) {
+    let t = &app.theme;
+    let block = card_block(app);
     let width = block.inner(area).width as usize;
 
-    let port_display = host.port.to_string();
-    let port_style = if host.has_custom_port() { value } else { dim };
+    let mut lines = vec![Line::from(Span::styled(
+        ellipsize(&format!("$ {}", host.as_ssh_command()), width),
+        ink(&t.success),
+    ))];
 
-    let user_display: &str = if host.user.is_empty() { "(default)" } else { &host.user };
-    let user_style = if host.user.is_empty() { dim } else { value };
-
-    let key_display: &str = if host.has_identity_file() { &host.identity_file } else { "(default)" };
-    let key_style = if host.has_identity_file() { value } else { dim };
-
-    let mut lines = vec![Line::from(vec![
-        Span::styled("▏ ", t.accent()),
-        Span::styled(host.alias.as_str(), t.title()),
-    ])];
-
-    if app.show_command {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            ellipsize(&format!(" $ {} ", host.as_ssh_command()), width),
-            t.input(),
-        )));
+    if let Some((mark, text, style)) = reach_line(app, host) {
+        lines.push(Line::from(vec![
+            Span::styled(mark, style),
+            Span::raw(" "),
+            Span::styled(ellipsize(&text, width.saturating_sub(2)), ink(&t.muted)),
+        ]));
     }
 
-    lines.push(Line::from(""));
-    lines.extend(detail_row("HostName ", host.display_host(), dim, value, width));
-    lines.extend(detail_row("Port     ", &port_display, dim, port_style, width));
-    lines.extend(detail_row("User     ", user_display, dim, user_style, width));
-    lines.extend(detail_row("Identity ", key_display, dim, key_style, width));
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
 
-    if host.has_extra_options() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("Extra options", t.bold_accent_secondary())));
-        for (k, v) in &host.extra_options {
-            lines.push(Line::from(vec![
-                Span::styled(format!("{:<10}", k), dim),
-                Span::styled(v.as_str(), value),
-            ]));
-        }
-    }
+fn draw_config_card(frame: &mut Frame, app: &AppService, host: &SshHost, area: Rect) {
+    let block = card_block(app);
+    let lines = config_lines(app, host, block.inner(area).width as usize);
 
-    frame.render_widget(
-        Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
-        area,
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// The host as it reads in the file, numbered down the side. The keywords are
+/// coloured by where they came from: the block header, the four fields the
+/// form knows about, and whatever else was typed in by hand.
+fn config_lines<'a>(app: &AppService, host: &SshHost, width: usize) -> Vec<Line<'a>> {
+    let t = &app.theme;
+    let value = ink(&t.fg);
+    let missing = ink(&t.muted);
+
+    let field = |name: &str, given: bool| (name.to_string(), ink(&t.accent), if given { value } else { missing });
+    let unset = || "(default)".to_string();
+
+    let mut entries = vec![
+        (host.alias.clone(), ("Host".to_string(), ink(&t.accent_secondary), value)),
+        (host.display_host().to_string(), field("HostName", true)),
+        (host.port.to_string(), field("Port", host.has_custom_port())),
+        (
+            if host.user.is_empty() { unset() } else { host.user.clone() },
+            field("User", !host.user.is_empty()),
+        ),
+        (
+            if host.has_identity_file() { host.identity_file.clone() } else { unset() },
+            field("IdentityFile", host.has_identity_file()),
+        ),
+    ];
+
+    entries.extend(
+        host.extra_options
+            .iter()
+            .map(|(k, v)| (v.clone(), (k.clone(), ink(&t.warning), value))),
     );
+
+    let gutter = entries.len().to_string().chars().count();
+
+    entries
+        .into_iter()
+        .enumerate()
+        .map(|(row, (text, (keyword, keyword_style, text_style)))| {
+            let room = width.saturating_sub(gutter + 3 + keyword.chars().count() + 1);
+            Line::from(vec![
+                Span::styled(format!("{:>1$}", row + 1, gutter), ink(&t.border)),
+                Span::styled(" │ ", ink(&t.border)),
+                Span::styled(keyword, keyword_style),
+                Span::raw(" "),
+                Span::styled(ellipsize(&text, room), text_style),
+            ])
+        })
+        .collect()
+}
+
+fn detail_hints<'a>(app: &AppService, width: usize) -> Line<'a> {
+    let t = &app.theme;
+    let mut spans = Vec::new();
+    let mut used = 0;
+
+    for (key, label) in [("↵", "connect"), ("e", "edit"), ("d", "delete")] {
+        let gap = if spans.is_empty() { 0 } else { 3 };
+        let room = key.chars().count() + label.chars().count() + 1;
+        if used + gap + room > width {
+            break;
+        }
+        used += gap + room;
+
+        if gap > 0 {
+            spans.push(Span::styled("   ", t.base()));
+        }
+        spans.push(Span::styled(key, t.bold_accent()));
+        spans.push(Span::styled(format!(" {}", label), t.muted()));
+    }
+
+    Line::from(spans)
 }
 
 fn ellipsize(text: &str, limit: usize) -> String {
@@ -354,31 +507,6 @@ fn ellipsize(text: &str, limit: usize) -> String {
         return text.to_string();
     }
     text.chars().take(limit.saturating_sub(1)).chain("…".chars()).collect()
-}
-
-/// Label and value share a line while they fit, and the value drops to its
-/// own indented line when they do not, which reads better than a wrap.
-fn detail_row<'a>(
-    label: &'a str,
-    value: &'a str,
-    label_style: Style,
-    value_style: Style,
-    width: usize,
-) -> Vec<Line<'a>> {
-    if label.chars().count() + value.chars().count() <= width {
-        return vec![Line::from(vec![
-            Span::styled(label, label_style),
-            Span::styled(value, value_style),
-        ])];
-    }
-
-    vec![
-        Line::from(Span::styled(label.trim_end(), label_style)),
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(ellipsize(value, width.saturating_sub(2)), value_style),
-        ]),
-    ]
 }
 
 pub fn draw_status_bar(frame: &mut Frame, app: &AppService, area: Rect) {
