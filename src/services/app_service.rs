@@ -670,6 +670,13 @@ impl AppService {
         self.write_form_field(value);
     }
 
+    pub fn form_new_line(&mut self) {
+        self.suggestion_cursor = None;
+        let mut value = self.read_form_field();
+        value.push('\n');
+        self.write_form_field(value);
+    }
+
     pub fn form_delete_char(&mut self) {
         self.suggestion_cursor = None;
         let mut value = self.read_form_field();
@@ -856,20 +863,19 @@ impl AppService {
 }
 
 /// The options the form has no field of its own for, written the way they read
-/// in the file: a name, a space and its value, with a semicolon between one and
-/// the next.
+/// in the file: a name, a space and its value, one to a line.
 fn write_options(options: &[(String, String)]) -> String {
     options
         .iter()
         .map(|(name, value)| format!("{} {}", name, value))
         .collect::<Vec<_>>()
-        .join("; ")
+        .join("\n")
 }
 
 fn parse_options(text: &str) -> Result<Vec<(String, String)>, String> {
     let mut parsed = Vec::new();
 
-    for entry in text.split(';') {
+    for entry in text.lines() {
         let entry = entry.trim();
         if entry.is_empty() {
             continue;
@@ -927,16 +933,34 @@ mod tests {
 
         assert_eq!(
             app.form_value(&FormField::Options),
-            "HostKeyAlgorithms ssh-rsa; SetEnv TERM=xterm-256color"
+            "HostKeyAlgorithms ssh-rsa\nSetEnv TERM=xterm-256color"
         );
 
-        type_into(&mut app, FormField::Options, "; Compression yes");
+        app.form_field = FormField::Options;
+        app.form_new_line();
+        type_into(&mut app, FormField::Options, "Compression yes");
         app.commit_edit(0, &repo);
 
         assert_eq!(
             app.host_at(0).map(|h| h.extra_options.len()),
             Some(3),
-            "the option typed on the end should have been kept"
+            "the option typed on a new line should have been kept"
+        );
+    }
+
+    #[test]
+    fn a_semicolon_in_an_option_stays_part_of_its_value() {
+        let (mut app, repo) = app_with(vec![]);
+
+        app.begin_add();
+        type_into(&mut app, FormField::Alias, "box");
+        type_into(&mut app, FormField::HostName, "10.0.0.5");
+        type_into(&mut app, FormField::Options, "ProxyCommand ssh -W %h:%p jump; true");
+        app.commit_add(&repo);
+
+        assert_eq!(
+            app.host_at(0).map(|h| h.extra_options.clone()),
+            Some(vec![("ProxyCommand".into(), "ssh -W %h:%p jump; true".into())])
         );
     }
 
