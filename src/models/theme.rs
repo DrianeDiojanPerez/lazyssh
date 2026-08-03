@@ -46,7 +46,7 @@ pub struct Theme {
 }
 
 impl Theme {
-    fn background(&self) -> Color {
+    pub fn background(&self) -> Color {
         if self.transparent { Color::Reset } else { self.bg.to_color() }
     }
 
