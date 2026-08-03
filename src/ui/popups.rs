@@ -114,6 +114,17 @@ fn form_block(title: &str) -> Block<'_> {
         .padding(Padding::new(2, 2, 1, 0))
 }
 
+/// The end of a value that is too long for its box, which is the end that is
+/// being typed: there is no way to move the cursor back through it.
+fn tail(value: &str, room: usize) -> String {
+    let count = value.chars().count();
+    if count <= room {
+        return value.to_string();
+    }
+
+    "…".chars().chain(value.chars().skip(count - room + 1)).collect()
+}
+
 pub fn draw_form(frame: &mut Frame, app: &AppService, title: &str, body: Rect) {
     let t = &app.theme;
     let fields = FormField::all();
@@ -143,7 +154,7 @@ pub fn draw_form(frame: &mut Frame, app: &AppService, title: &str, body: Rect) {
             Span::styled(format!("  {}", field.placeholder()), t.muted()),
         ]));
 
-        let value = app.form_value(field);
+        let value = tail(&app.form_value(field), width.saturating_sub(3));
         let cursor = if is_active { "▎" } else { "" };
         let input_style = if is_active { t.input() } else { t.muted() };
 

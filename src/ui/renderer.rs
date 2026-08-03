@@ -907,6 +907,11 @@ mod tests {
         let screen = screenshot::draw(&app, 40, 12);
 
         assert!(screen.contains("IdentityFile"), "active field is off screen:\n{}", screen);
+
+        app.form_field = crate::models::FormField::Options;
+        let last = screenshot::draw(&app, 40, 12);
+
+        assert!(last.contains("Options"), "the last field is out of reach:\n{}", last);
     }
 
     #[test]
@@ -1046,6 +1051,7 @@ mod tests {
     }
 
 }
+
 
 
 
