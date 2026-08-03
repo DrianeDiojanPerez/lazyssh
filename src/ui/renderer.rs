@@ -112,7 +112,6 @@ pub fn render(frame: &mut Frame, app: &AppService) {
 mod tests {
     use std::time::Duration;
 
-    use crossterm::event::KeyCode;
     use ratatui::layout::Rect;
 
     use crate::models::Toast;
@@ -253,25 +252,6 @@ mod tests {
             .lines()
             .position(|line| line.contains(needle))
             .unwrap_or_else(|| panic!("'{}' is nowhere on screen:\n{}", needle, screen)) as u16
-    }
-
-    #[test]
-    fn the_status_bar_hints_are_buttons() {
-        let (app, _repo) = app_with(hosts(3));
-        let frames = super::frames(&app, Rect::new(0, 0, 80, 24));
-        let screen = screenshot::draw(&app, 80, 24);
-        let bar = frames.status.y;
-
-        for (hint, code) in [("a add", KeyCode::Char('a')), ("? help", KeyCode::Char('?'))] {
-            let column = column_of(&screen, bar, hint);
-            assert_eq!(
-                crate::ui::panels::hint_at(&app, frames.status, column, bar),
-                Some(code),
-                "clicking '{}' should press its key:\n{}",
-                hint,
-                screen
-            );
-        }
     }
 
     #[test]
@@ -700,7 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn the_bottom_bar_carries_what_the_header_used_to() {
+    fn the_bottom_bar_is_down_to_where_the_config_is() {
         let (app, _repo) = app_with(hosts(3));
 
         let screen = screenshot::draw(&app, 100, 12);
@@ -708,10 +688,11 @@ mod tests {
         let bottom = screen.lines().last().expect("a screen has rows");
 
         assert!(top.contains("Tabs"), "the tab panel should be at the top now:\n{}", screen);
-        assert!(bottom.contains("NORMAL"), "the bar lost its mode:\n{}", screen);
-        assert!(bottom.contains("? help"), "the bar lost its hints:\n{}", screen);
         assert!(bottom.contains(".ssh/config"), "the bar lost the config path:\n{}", screen);
         assert!(bottom.contains("3 hosts"), "the bar lost the host count:\n{}", screen);
+        assert!(!bottom.contains("NORMAL"), "the mode chip should be gone:\n{}", screen);
+        assert!(!bottom.contains("? help"), "the key hints should be gone:\n{}", screen);
+        assert!(bottom.ends_with(' '), "the bar should sit hard right:\n{}", screen);
     }
 
     #[test]
@@ -928,7 +909,8 @@ mod tests {
         for label in ["Host Alias", "HostName", "Port", "User", "IdentityFile"] {
             assert!(screen.contains(label), "form is missing '{}':\n{}", label, screen);
         }
-        assert!(screen.contains("Esc cancel"), "form is missing its footer:\n{}", screen);
+        assert!(screen.contains("Tab next field"), "form is missing its footer:\n{}", screen);
+        assert!(screen.contains(" Cancel "), "form is missing its way out:\n{}", screen);
     }
 
     #[test]
@@ -1079,15 +1061,21 @@ mod tests {
     }
 
     #[test]
-    fn the_status_bar_keeps_the_way_out_on_a_narrow_terminal() {
-        let (mut app, _repo) = app_with(hosts(20));
+    fn the_status_bar_drops_its_tail_before_the_config_path() {
+        let (app, _repo) = app_with(hosts(20));
 
-        assert!(screenshot::draw(&app, 50, 18).contains("? help"));
+        let wide = screenshot::draw(&app, 100, 18);
+        let narrow = screenshot::draw(&app, 50, 18);
 
-        app.begin_add();
-        assert!(screenshot::draw(&app, 50, 18).contains("Esc cancel"));
+        assert!(wide.contains("stub"), "a wide bar should name the theme:\n{}", wide);
+        assert!(
+            narrow.lines().last().is_some_and(|bar| bar.contains(".ssh/config")),
+            "the path should outlive the rest:\n{}",
+            narrow
+        );
     }
 }
+
 
 
 

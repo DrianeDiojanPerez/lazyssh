@@ -1,4 +1,3 @@
-use crossterm::event::KeyCode;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Modifier, Style},
@@ -535,26 +534,18 @@ fn ellipsize(text: &str, limit: usize) -> String {
     text.chars().take(limit.saturating_sub(1)).chain("…".chars()).collect()
 }
 
+/// What is left at the bottom: where the config is and how much is in it. The
+/// keys that used to be listed here are on the panels that answer to them.
 pub fn draw_status_bar(frame: &mut Frame, app: &AppService, area: Rect) {
     let t = &app.theme;
 
     let meta = meta_spans(app, area.width);
-    let meta_width: usize = meta.iter().map(|s| s.content.chars().count()).sum();
+    let used: usize = meta.iter().map(|s| s.content.chars().count()).sum();
 
-    let mut spans = vec![mode_chip(app), Span::styled("  ", t.status_bar())];
-    let mut used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-
-    for (_, _, key, label, _) in hint_layout(app, hint_room(app, area.width)) {
-        spans.push(Span::styled(key, t.bold_accent()));
-        spans.push(Span::styled(format!(" {}", label), t.muted()));
-        spans.push(Span::styled(" · ", t.border()));
-        used += key.chars().count() + label.chars().count() + 4;
-    }
-    spans.pop();
-    used = used.saturating_sub(3);
-
-    let gap = (area.width as usize).saturating_sub(used + meta_width);
-    spans.push(Span::styled(" ".repeat(gap), t.status_bar()));
+    let mut spans = vec![Span::styled(
+        " ".repeat((area.width as usize).saturating_sub(used)),
+        t.status_bar(),
+    )];
     spans.extend(meta);
 
     frame.render_widget(Paragraph::new(Line::from(spans)).style(t.status_bar()), area);
@@ -578,7 +569,7 @@ fn meta_spans<'a>(app: &AppService, width: u16) -> Vec<Span<'a>> {
 
     for (text, style) in segments {
         let separator = if spans.is_empty() { 0 } else { 3 };
-        if used + separator + text.chars().count() > (width / 2) as usize {
+        if used + separator + text.chars().count() > width as usize {
             break;
         }
         used += separator + text.chars().count();
@@ -593,133 +584,3 @@ fn meta_spans<'a>(app: &AppService, width: u16) -> Vec<Span<'a>> {
     spans
 }
 
-fn hint_room(app: &AppService, width: u16) -> u16 {
-    let meta: usize = meta_spans(app, width).iter().map(|s| s.content.chars().count()).sum();
-    width.saturating_sub(meta as u16 + 1)
-}
-
-pub fn hint_at(app: &AppService, area: Rect, column: u16, row: u16) -> Option<KeyCode> {
-    if row != area.y {
-        return None;
-    }
-
-    hint_layout(app, hint_room(app, area.width))
-        .into_iter()
-        .find(|(x, width, _, _, _)| column >= *x && column < x + width)
-        .map(|(_, _, _, _, code)| code)
-}
-
-/// Lays the hints out left to right, dropping the ones that will not fit. The
-/// renderer and the mouse both read this, so a click always lands on the hint
-/// that is actually printed there.
-fn hint_layout(
-    app: &AppService,
-    width: u16,
-) -> Vec<(u16, u16, &'static str, &'static str, KeyCode)> {
-    let mut placed = Vec::new();
-    let mut x: u16 = mode_chip(app).content.chars().count() as u16 + 2;
-
-    // INFO: the way out of the current mode is worth more than the rest, so
-    // its width is reserved before the others are laid out
-    let escape = escape_hint(app);
-    let reserved = escape.0.chars().count() as u16 + escape.1.chars().count() as u16 + 4;
-
-    for (key, label, code) in hints_for(app) {
-        let span = key.chars().count() as u16 + label.chars().count() as u16 + 1;
-        if x + span + 3 + reserved > width {
-            break;
-        }
-
-        placed.push((x, span, *key, *label, *code));
-        x += span + 3;
-    }
-
-    let span = escape.0.chars().count() as u16 + escape.1.chars().count() as u16 + 1;
-    placed.push((x, span, escape.0, escape.1, escape.2));
-    placed
-}
-
-fn mode_chip<'a>(app: &AppService) -> Span<'a> {
-    if app.is_session_focused() {
-        return Span::styled(" SESSION ", app.theme.pill(&app.theme.success));
-    }
-
-    let label = match &app.mode {
-        Mode::Normal => "NORMAL",
-        Mode::Search => "SEARCH",
-        Mode::AddHost => "ADD",
-        Mode::EditHost(_) => "EDIT",
-        Mode::ConfirmDelete(_) => "DELETE",
-        Mode::SelectTheme => "THEME",
-        Mode::ChooseLaunch => "CONNECT",
-        Mode::Settings => "SETTINGS",
-        Mode::Help => "HELP",
-    };
-
-    Span::styled(format!(" {} ", label), app.theme.selected())
-}
-
-fn escape_hint(app: &AppService) -> (&'static str, &'static str, KeyCode) {
-    if app.is_session_focused() {
-        return ("C-b", "sidebar", KeyCode::Null);
-    }
-
-    match &app.mode {
-        Mode::Normal => ("?", "help", KeyCode::Char('?')),
-        Mode::Search => ("Esc", "clear", KeyCode::Esc),
-        Mode::AddHost | Mode::EditHost(_) => ("Esc", "cancel", KeyCode::Esc),
-        Mode::ConfirmDelete(_) => ("Esc", "keep", KeyCode::Esc),
-        Mode::SelectTheme | Mode::Settings | Mode::Help => ("Esc", "close", KeyCode::Esc),
-        Mode::ChooseLaunch => ("Esc", "cancel", KeyCode::Esc),
-    }
-}
-
-/// The hints that matter in the current mode, most useful first, so the
-/// status bar degrades sensibly on a narrow terminal.
-fn hints_for(app: &AppService) -> &'static [(&'static str, &'static str, KeyCode)] {
-    if app.is_session_focused() {
-        return &[("keys", "go to the session", KeyCode::Null)];
-    }
-
-    match &app.mode {
-        Mode::Normal => &[
-            ("↵", "connect", KeyCode::Enter),
-            ("a", "add", KeyCode::Char('a')),
-            ("e", "edit", KeyCode::Char('e')),
-            ("d", "delete", KeyCode::Char('d')),
-            ("/", "filter", KeyCode::Char('/')),
-            ("q", "quit", KeyCode::Char('q')),
-            ("↑↓", "move", KeyCode::Null),
-            ("c", "command", KeyCode::Char('c')),
-            ("r", "reload", KeyCode::Char('r')),
-            ("w", "close tab", KeyCode::Char('w')),
-            ("s", "settings", KeyCode::Char('s')),
-            ("t", "theme", KeyCode::Char('t')),
-            ("T", "transparency", KeyCode::Char('T')),
-        ],
-        Mode::Search => &[
-            ("type", "to filter", KeyCode::Null),
-            ("↵", "keep filter", KeyCode::Enter),
-            ("↑↓", "move", KeyCode::Null),
-        ],
-        Mode::AddHost | Mode::EditHost(_) => &[
-            ("Tab", "next field", KeyCode::Tab),
-            ("S-Tab", "previous", KeyCode::BackTab),
-            ("↵", "save", KeyCode::Enter),
-        ],
-        Mode::ConfirmDelete(_) => &[("y", "delete", KeyCode::Char('y'))],
-        Mode::SelectTheme => &[
-            ("↑↓", "browse", KeyCode::Null),
-            ("↵", "apply", KeyCode::Enter),
-        ],
-        Mode::ChooseLaunch => &[
-            ("t", "in a tab", KeyCode::Char('t')),
-            ("f", "whole terminal", KeyCode::Char('f')),
-        ],
-        Mode::Settings => &[
-            ("↑↓", "browse", KeyCode::Null),
-            ("↵", "choose", KeyCode::Enter),
-        ],
-        Mode::Help => &[],
-    }
-}
