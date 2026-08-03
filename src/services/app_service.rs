@@ -1,13 +1,27 @@
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::models::{
     Action, Focus, FormField, LaunchStyle, Mode, Setting, SshHost, Theme, ThemePreference, Toast,
 };
 use crate::repositories::{SshRepository, ThemeRepository};
-use crate::services::{Probes, Session};
+use crate::services::{Probes, Session, SETTLE};
 
 const MAX_TOASTS: usize = 3;
+
+/// A connection the screen is holding on before it hands the terminal over, so
+/// the wait is seen rather than guessed at.
+pub struct Launching {
+    pub alias: String,
+    args: Vec<String>,
+    since: Instant,
+}
+
+impl Launching {
+    pub fn waiting_for(&self) -> Duration {
+        self.since.elapsed()
+    }
+}
 
 pub struct AppService {
     preamble: String,
@@ -44,6 +58,7 @@ pub struct AppService {
     pub sidebar_open: bool,
     pub settings_cursor: usize,
     pub launch_cursor: usize,
+    pub launching: Option<Launching>,
     theme_from_settings: bool,
 }
 
@@ -101,6 +116,7 @@ impl AppService {
             sidebar_open: true,
             settings_cursor: 0,
             launch_cursor: 0,
+            launching: None,
             theme_from_settings: false,
         }
     }
@@ -406,10 +422,51 @@ impl AppService {
     }
 
     pub fn launch_full_screen(&mut self) {
-        if let Some(host) = self.selected_host() {
-            self.pending_action = Action::LaunchSsh(host.as_ssh_args());
-        }
         self.mode = Mode::Normal;
+
+        let Some(host) = self.selected_host() else {
+            return;
+        };
+        let args = host.as_ssh_args();
+
+        if !self.wants_connecting_screen() {
+            self.pending_action = Action::LaunchSsh(args);
+            return;
+        }
+
+        self.launching = Some(Launching {
+            alias: host.alias.clone(),
+            args,
+            since: Instant::now(),
+        });
+    }
+
+    pub fn is_launching(&self) -> bool {
+        self.launching.is_some()
+    }
+
+    /// Hands the terminal over once the wait has been up long enough to read.
+    /// Until then the screen stays where it is with the wait over the top.
+    pub fn advance_launch(&mut self) {
+        if self.launching.as_ref().is_some_and(|held| held.waiting_for() < SETTLE) {
+            return;
+        }
+
+        if let Some(held) = self.launching.take() {
+            self.pending_action = Action::LaunchSsh(held.args);
+        }
+    }
+
+    pub fn wants_connecting_screen(&self) -> bool {
+        self.theme_preference.connecting
+    }
+
+    pub fn toggle_connecting_screen(&mut self, theme_repo: &dyn ThemeRepository) {
+        self.theme_preference.connecting = !self.theme_preference.connecting;
+        theme_repo.save_preference(&self.theme_preference);
+
+        let label = if self.wants_connecting_screen() { "on" } else { "off" };
+        self.toast(Toast::success(format!("Connecting screen: {}", label)));
     }
 
     pub fn open_settings(&mut self) {
@@ -434,6 +491,7 @@ impl AppService {
             Some(Setting::Transparency) => self.toggle_transparency(theme_repo),
             Some(Setting::TabEdges) => self.toggle_tab_edges(theme_repo),
             Some(Setting::TabPanel) => self.toggle_tab_panel(theme_repo),
+            Some(Setting::Connecting) => self.toggle_connecting_screen(theme_repo),
             Some(Setting::Theme) => {
                 // INFO: the picker is opened from here, so Esc out of it comes
                 // back here rather than dropping the whole panel
@@ -1101,17 +1159,45 @@ mod tests {
     }
 
     #[test]
-    fn the_old_way_hands_the_whole_terminal_over() {
+    fn the_old_way_says_it_is_connecting_before_it_hands_the_terminal_over() {
         let (mut app, _repo) = app_with(vec![host("box", 22)]);
         app.choose_launch_style(LaunchStyle::FullScreen, &crate::test_support::StubThemeRepo);
 
         app.request_connection(20, 40);
 
+        assert!(app.is_launching(), "the wait should come first");
+        assert!(
+            matches!(app.take_action(), Action::Continue),
+            "the terminal should not be handed over while the wait is up"
+        );
+
+        std::thread::sleep(SETTLE);
+        app.advance_launch();
+
         assert!(
             matches!(app.take_action(), Action::LaunchSsh(args) if args.contains(&"box".to_string())),
-            "full screen should hand ssh the terminal"
+            "full screen should hand ssh the terminal once the wait is over"
         );
+        assert!(!app.is_launching());
         assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn with_the_connecting_screen_off_the_terminal_is_handed_over_at_once() {
+        let (mut app, _repo) = app_with(vec![host("box", 22)]);
+        let themes = crate::test_support::StubThemeRepo;
+
+        app.choose_launch_style(LaunchStyle::FullScreen, &themes);
+        app.toggle_connecting_screen(&themes);
+        assert!(!app.wants_connecting_screen());
+
+        app.request_connection(20, 40);
+
+        assert!(!app.is_launching(), "there should be nothing to wait for");
+        assert!(
+            matches!(app.take_action(), Action::LaunchSsh(args) if args.contains(&"box".to_string())),
+            "full screen should go straight there"
+        );
     }
 
     #[test]

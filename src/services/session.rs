@@ -9,11 +9,11 @@ use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySyste
 /// looks like this, so it doubles as "it has not said yet".
 const UNFINISHED: i32 = i32::MIN;
 
-/// How long a session counts as connecting even after the far end has
+/// How long a connection is shown as being made even after the far end has
 /// answered. A host on the same network answers before the eye can follow it,
 /// and a screen that flickers past reads as a fault rather than as a
 /// connection being made.
-const SETTLE: Duration = Duration::from_secs(2);
+pub const SETTLE: Duration = Duration::from_secs(2);
 
 pub struct Session {
     pub alias: String,
