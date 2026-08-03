@@ -191,14 +191,12 @@ fn on_mouse(
             })
         }
 
-        // INFO: the pointer resting on a card is enough to say which host is
-        // wanted, so the list takes the focus and the details follow it around
-        // without waiting to be clicked. A session keeps running behind it and
-        // takes the keys back the moment its pane is pointed at
+        // INFO: the pointer only says which side is being worked in, so the
+        // keys follow it across. What is selected, and the details that go with
+        // it, still wait to be clicked
         (Mode::Normal | Mode::Search, MouseEventKind::Moved) if !app.is_launching() => {
-            if let Some(index) = panels::host_at(app, frames.list, column, row) {
+            if frames.sidebar.is_some_and(|side| within(side, column, row)) {
                 app.focus_sidebar();
-                app.select(index);
             } else if within(frames.main, column, row) {
                 app.focus_session();
             }
