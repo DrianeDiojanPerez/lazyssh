@@ -22,7 +22,6 @@ pub struct Frames {
     pub search: Rect,
     pub list: Rect,
     pub main: Rect,
-    pub status: Rect,
 }
 
 /// The sidebar is a fixed strip rather than a share of the width, so the
@@ -37,7 +36,6 @@ pub fn frames(app: &AppService, area: Rect) -> Frames {
             // connection does not shove the whole screen down a line
             Constraint::Length(if app.tab_panel() { 2 } else { 1 }),
             Constraint::Min(5),
-            Constraint::Length(1),
         ])
         .split(area);
 
@@ -66,7 +64,6 @@ pub fn frames(app: &AppService, area: Rect) -> Frames {
         search: sidebar[0],
         list: sidebar[1],
         main: columns[1],
-        status: rows[2],
     }
 }
 
@@ -88,8 +85,6 @@ pub fn render(frame: &mut Frame, app: &AppService) {
         Some(session) => session::draw(frame, app, session, frames.main),
         None => panels::draw_detail_panel(frame, app, frames.main),
     }
-
-    panels::draw_status_bar(frame, app, frames.status);
 
     // INFO: toasts belong to the screen, not to the panels, so they hang in
     // the very corner rather than starting where the details do
@@ -680,22 +675,6 @@ mod tests {
     }
 
     #[test]
-    fn the_bottom_bar_is_down_to_where_the_config_is() {
-        let (app, _repo) = app_with(hosts(3));
-
-        let screen = screenshot::draw(&app, 100, 12);
-        let top = screen.lines().next().expect("a screen has rows");
-        let bottom = screen.lines().last().expect("a screen has rows");
-
-        assert!(top.contains("Tabs"), "the tab panel should be at the top now:\n{}", screen);
-        assert!(bottom.contains(".ssh/config"), "the bar lost the config path:\n{}", screen);
-        assert!(bottom.contains("3 hosts"), "the bar lost the host count:\n{}", screen);
-        assert!(!bottom.contains("NORMAL"), "the mode chip should be gone:\n{}", screen);
-        assert!(!bottom.contains("? help"), "the key hints should be gone:\n{}", screen);
-        assert!(bottom.ends_with(' '), "the bar should sit hard right:\n{}", screen);
-    }
-
-    #[test]
     fn the_tabs_can_step_out_of_their_panel() {
         let (mut app, _repo) = app_with(hosts(3));
         app.sessions.push(
@@ -1060,21 +1039,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_status_bar_drops_its_tail_before_the_config_path() {
-        let (app, _repo) = app_with(hosts(20));
-
-        let wide = screenshot::draw(&app, 100, 18);
-        let narrow = screenshot::draw(&app, 50, 18);
-
-        assert!(wide.contains("stub"), "a wide bar should name the theme:\n{}", wide);
-        assert!(
-            narrow.lines().last().is_some_and(|bar| bar.contains(".ssh/config")),
-            "the path should outlive the rest:\n{}",
-            narrow
-        );
-    }
 }
+
 
 
 
