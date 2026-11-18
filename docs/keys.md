@@ -36,7 +36,9 @@ Moving the mouse over the host list or a session moves focus there too.
 
 ## Mouse
 
-- Scroll over the host list to move through it. Scroll over a session to see its earlier output.
+- Scroll over the host list to move through it.
+- In a session, clicks, drags, and the wheel go to the program on the server when it turned the mouse on. In Neovim that means a click moves the cursor, a drag selects, and the wheel scrolls the buffer. The same goes for htop, `less --mouse`, and tmux with `mouse on`.
+- When the program didn't turn the mouse on, like a plain shell prompt, the wheel scrolls back through the session's earlier output instead.
 - Double-click a host to connect.
 - Click a tab to switch to it, or its close button to close it.
 - Hold `Shift` while dragging to select text with your terminal instead of lazyssh, then copy it with your terminal's copy key.
