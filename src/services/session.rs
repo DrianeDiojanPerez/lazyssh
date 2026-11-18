@@ -5,6 +5,9 @@ use std::time::{Duration, Instant};
 
 use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
 
+use crossterm::event::{KeyModifiers, MouseEventKind};
+
+use super::mouse;
 use super::replies::{Found, Questions};
 
 /// What the exit holds while the process is still there. No real exit code
@@ -211,6 +214,27 @@ impl Session {
         self.send(&bytes);
     }
 
+    /// Reports a mouse event to the remote program if it turned the mouse on.
+    /// `column` and `row` count from zero inside the session. Whether anything
+    /// was sent, so the caller knows if lazyssh should handle it instead.
+    pub fn mouse(&mut self, kind: MouseEventKind, modifiers: KeyModifiers, column: u16, row: u16) -> bool {
+        let Ok((mode, encoding)) = self
+            .screen
+            .lock()
+            .map(|screen| (screen.screen().mouse_protocol_mode(), screen.screen().mouse_protocol_encoding()))
+        else {
+            return false;
+        };
+
+        match mouse::encode(mode, encoding, kind, modifiers, column, row) {
+            Some(bytes) => {
+                self.send(&bytes);
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn send(&mut self, bytes: &[u8]) {
         if let Ok(mut writer) = self.writer.lock() {
             let _ = writer.write_all(bytes);
@@ -300,6 +324,38 @@ mod tests {
 
         assert_eq!(copies, vec![b"\x1b]52;c;aGVsbG8=\x07".to_vec()]);
         assert!(session.take_copies().is_empty());
+    }
+
+    #[test]
+    fn a_click_reaches_a_program_that_turned_the_mouse_on() {
+        let script = r#"stty -echo; printf '\033[?1000h\033[?1006hready'; IFS= read -r -t 2 -d M click; printf '\033[?1000l\033[?1006l\n'; printf 'got %q\n' "$click""#;
+        let mut session = Session::spawn("test", "bash", &["-c".to_string(), script.to_string()], 10, 60)
+            .expect("the pty should start");
+        wait_until_ready(&session);
+
+        let sent = session.mouse(MouseEventKind::Down(crossterm::event::MouseButton::Left), KeyModifiers::NONE, 4, 2);
+
+        wait_for_the_end(&session);
+        let printed = session.screen.lock().unwrap().screen().contents();
+        assert!(sent, "the click was not sent");
+        assert!(printed.contains(r"got $'\E[<0;5;3'"), "the click did not arrive:\n{}", printed);
+    }
+
+    #[test]
+    fn a_click_is_left_to_lazyssh_when_the_program_did_not_ask() {
+        let mut session = Session::spawn("test", "bash", &["-c".to_string(), "printf ready; sleep 2".to_string()], 10, 60)
+            .expect("the pty should start");
+        wait_until_ready(&session);
+
+        assert!(!session.mouse(MouseEventKind::ScrollUp, KeyModifiers::NONE, 4, 2));
+    }
+
+    fn wait_until_ready(session: &Session) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !session.screen.lock().unwrap().screen().contents().contains("ready") {
+            assert!(Instant::now() < deadline, "the program never got ready");
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     #[test]

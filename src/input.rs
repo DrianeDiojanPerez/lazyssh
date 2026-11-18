@@ -178,6 +178,24 @@ fn on_mouse(
     let frames = renderer::frames(app, Rect::new(0, 0, width, height));
     let (column, row) = (mouse.column, mouse.row);
 
+    // INFO: the session gets the mouse first when its program asked for it,
+    // so a click in nvim moves its cursor. A plain shell never asks, and
+    // there the wheel still scrolls lazyssh's own history
+    let inside = Rect::new(
+        frames.main.x + 1,
+        frames.main.y + 1,
+        frames.main.width.saturating_sub(2),
+        frames.main.height.saturating_sub(2),
+    );
+    if app.mode == Mode::Normal && within(inside, column, row) {
+        let (x, y) = (column - inside.x, row - inside.y);
+        if let Some(session) = app.active_session_mut() {
+            if session.mouse(mouse.kind, mouse.modifiers, x, y) {
+                return ok(app.focus_session());
+            }
+        }
+    }
+
     match (&app.mode, mouse.kind) {
         (Mode::SelectTheme, MouseEventKind::ScrollUp) => return ok(app.theme_cursor_up()),
         (Mode::SelectTheme, MouseEventKind::ScrollDown) => return ok(app.theme_cursor_down()),
