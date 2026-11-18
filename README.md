@@ -1,4 +1,4 @@
-<p align="center"><img src="demo/demo.png" alt="lazyssh: an SSH connection manager in the terminal" width="800"></p>
+<p align="center"><img src="assets/banner.png" alt="lazyssh: your SSH hosts in a terminal, one tab each" width="100%"></p>
 
 A terminal app for your SSH hosts. It reads and edits `~/.ssh/config` directly, shows which hosts are up, and opens each connection in its own tab. Built for Linux, with a Windows build too.
 
