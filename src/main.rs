@@ -6,12 +6,12 @@ mod services;
 mod test_support;
 mod ui;
 
-use std::io;
+use std::io::{self, Write};
 use std::process::Command;
 use std::time::Instant;
 
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
+    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -152,7 +152,7 @@ fn run_tui(
 ) -> io::Result<Action> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste)?;
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -173,6 +173,17 @@ fn run_tui(
         }
 
         terminal.draw(|frame| ui::render(frame, app))?;
+
+        // INFO: copies go out between frames, so they never land in the middle
+        // of a draw. The real terminal is the one that owns the clipboard
+        let copies = app.take_copies();
+        if !copies.is_empty() {
+            let out = terminal.backend_mut();
+            for copy in copies {
+                out.write_all(&copy)?;
+            }
+            out.flush()?;
+        }
 
         // INFO: toasts age by however long the frame took, but only while some
         // were already on screen: with none, the loop sits in a blocking read
@@ -199,7 +210,8 @@ fn run_tui(
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        DisableBracketedPaste
     )?;
     terminal.show_cursor()?;
 

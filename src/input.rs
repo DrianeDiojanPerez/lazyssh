@@ -61,6 +61,19 @@ pub fn handle_next_event(
             }
         }
         Event::Key(key) => dispatch_key(app, key, ssh_repo, theme_repo),
+        Event::Paste(text) if app.is_session_focused() && app.mode == Mode::Normal => {
+            if let Some(session) = app.active_session_mut() {
+                session.paste(&text);
+            }
+        }
+        // INFO: a paste is only typed where there is text to type into. Its
+        // line breaks are dropped, since every field is one line and an Enter
+        // would submit the form halfway
+        Event::Paste(text) if matches!(app.mode, Mode::Search | Mode::AddHost | Mode::EditHost(_)) => {
+            for c in text.chars().filter(|c| !c.is_control()) {
+                dispatch_key(app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE), ssh_repo, theme_repo);
+            }
+        }
         Event::Mouse(mouse) => on_mouse(app, mouse, clicks, ssh_repo, theme_repo)?,
         _ => {}
     }
