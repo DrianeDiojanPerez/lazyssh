@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 
 use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
 
+use super::replies::{Found, Questions};
+
 /// What the exit holds while the process is still there. No real exit code
 /// looks like this, so it doubles as "it has not said yet".
 const UNFINISHED: i32 = i32::MIN;
@@ -22,7 +24,8 @@ pub struct Session {
     spoken: Arc<AtomicBool>,
     opened: Instant,
     exit: Arc<AtomicI32>,
-    writer: Box<dyn Write + Send>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    copies: Arc<Mutex<Vec<Vec<u8>>>>,
     master: Box<dyn MasterPty + Send>,
     rows: u16,
     columns: u16,
@@ -64,10 +67,11 @@ impl Session {
             .master
             .try_clone_reader()
             .map_err(|e| format!("cannot read the session: {}", e))?;
-        let writer = pair
-            .master
-            .take_writer()
-            .map_err(|e| format!("cannot write to the session: {}", e))?;
+        let writer = Arc::new(Mutex::new(
+            pair.master
+                .take_writer()
+                .map_err(|e| format!("cannot write to the session: {}", e))?,
+        ));
 
         let screen = Arc::new(Mutex::new(vt100::Parser::new(size.rows, size.cols, 2000)));
         let running = Arc::new(AtomicBool::new(true));
@@ -79,14 +83,44 @@ impl Session {
         // being gone, and only the one below knows that
         let feed = Arc::clone(&screen);
         let heard = Arc::clone(&spoken);
+        let reply = Arc::clone(&writer);
+        let copies = Arc::new(Mutex::new(Vec::new()));
+        let copied = Arc::clone(&copies);
         std::thread::spawn(move || {
             let mut buffer = [0u8; 8192];
+            let mut questions = Questions::default();
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) | Err(_) => break,
                     Ok(read) => {
+                        let output = &buffer[..read];
+                        let mut answers = Vec::new();
                         if let Ok(mut screen) = feed.lock() {
-                            screen.process(&buffer[..read]);
+                            // INFO: everything up to a question is drawn before
+                            // it is answered, so the cursor is where the
+                            // program expects it to be
+                            let mut drawn = 0;
+                            for (end, found) in questions.find(output) {
+                                screen.process(&output[drawn..end]);
+                                drawn = end;
+                                match found {
+                                    Found::Question(question) => {
+                                        answers.extend(question.answer(screen.screen().cursor_position()))
+                                    }
+                                    Found::Copy(sequence) => {
+                                        if let Ok(mut copies) = copied.lock() {
+                                            copies.push(sequence);
+                                        }
+                                    }
+                                }
+                            }
+                            screen.process(&output[drawn..]);
+                        }
+                        if !answers.is_empty() {
+                            if let Ok(mut writer) = reply.lock() {
+                                let _ = writer.write_all(&answers);
+                                let _ = writer.flush();
+                            }
                         }
                         heard.store(true, Ordering::SeqCst);
                     }
@@ -113,6 +147,7 @@ impl Session {
             opened: Instant::now(),
             exit,
             writer,
+            copies,
             master: pair.master,
             rows: size.rows,
             columns: size.cols,
@@ -159,9 +194,28 @@ impl Session {
         !self.is_running() && !self.ssh_failed()
     }
 
+    /// What the remote end asked to put on the clipboard since the last call,
+    /// each one a whole OSC 52 sequence for the real terminal to carry out.
+    pub fn take_copies(&self) -> Vec<Vec<u8>> {
+        self.copies.lock().map(|mut copies| std::mem::take(&mut *copies)).unwrap_or_default()
+    }
+
+    /// Pastes `text` the way the remote program asked for it: marked as a paste
+    /// when it turned that on, so an editor does not indent it as typing.
+    pub fn paste(&mut self, text: &str) {
+        let marked = self.screen.lock().map(|screen| screen.screen().bracketed_paste()).unwrap_or(false);
+        let bytes = match marked {
+            true => [b"\x1b[200~".as_slice(), text.as_bytes(), b"\x1b[201~"].concat(),
+            false => text.as_bytes().to_vec(),
+        };
+        self.send(&bytes);
+    }
+
     pub fn send(&mut self, bytes: &[u8]) {
-        let _ = self.writer.write_all(bytes);
-        let _ = self.writer.flush();
+        if let Ok(mut writer) = self.writer.lock() {
+            let _ = writer.write_all(bytes);
+            let _ = writer.flush();
+        }
     }
 
     pub fn resize(&mut self, rows: u16, columns: u16) {
@@ -206,6 +260,82 @@ mod tests {
             assert!(Instant::now() < deadline, "nothing was ever read:\n{}", printed);
             std::thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    #[test]
+    fn a_program_that_asks_what_terminal_this_is_gets_an_answer() {
+        let script = r#"stty -echo; printf '\033[c'; if IFS= read -r -t 2 -d c reply; then echo answered; else echo silent; fi"#;
+        let session = Session::spawn("test", "bash", &["-c".to_string(), script.to_string()], 10, 40)
+            .expect("the pty should start");
+
+        wait_for_the_end(&session);
+        let printed = session.screen.lock().unwrap().screen().contents();
+        assert!(printed.contains("answered"), "the question went unanswered:\n{}", printed);
+    }
+
+    #[test]
+    fn a_program_that_asks_where_the_cursor_is_gets_the_spot() {
+        let script = r#"stty -echo; printf 'abc\033[6n'; IFS= read -r -t 2 -d R reply; echo; echo "at ${reply#*[}""#;
+        let session = Session::spawn("test", "bash", &["-c".to_string(), script.to_string()], 10, 40)
+            .expect("the pty should start");
+
+        wait_for_the_end(&session);
+        let printed = session.screen.lock().unwrap().screen().contents();
+        assert!(printed.contains("at 1;4"), "the cursor was not reported:\n{}", printed);
+    }
+
+    #[test]
+    fn a_copy_from_the_remote_end_is_handed_over_once() {
+        let script = r#"printf 'before\033]52;c;aGVsbG8=\007after'"#;
+        let session = Session::spawn("test", "bash", &["-c".to_string(), script.to_string()], 10, 40)
+            .expect("the pty should start");
+
+        wait_for_the_end(&session);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut copies = session.take_copies();
+        while copies.is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+            copies = session.take_copies();
+        }
+
+        assert_eq!(copies, vec![b"\x1b]52;c;aGVsbG8=\x07".to_vec()]);
+        assert!(session.take_copies().is_empty());
+    }
+
+    #[test]
+    fn a_paste_is_marked_when_the_program_asked_for_it() {
+        let script = r#"stty -echo; printf '\033[?2004hready'; IFS= read -r -t 2 -d '~' a; IFS= read -r -t 2 -d '~' b; printf '\033[?2004l\n'; printf 'got %q\n' "${a}~${b}~""#;
+
+        let printed = pasted_into(script, "hi");
+
+        assert!(printed.contains(r"got $'\E[200~hi\E[201~'"), "the paste was not marked:\n{}", printed);
+    }
+
+    #[test]
+    fn a_paste_is_plain_text_when_the_program_did_not_ask() {
+        let script = r#"stty -echo; printf 'ready'; IFS= read -r -t 2 -n 2 a; echo; printf 'got %q\n' "$a""#;
+
+        let printed = pasted_into(script, "hi");
+
+        assert!(printed.contains("got hi"), "the paste did not arrive as typed:\n{}", printed);
+    }
+
+    /// Runs `script`, pastes `text` once it has printed "ready", and returns
+    /// what was on the screen when it ended.
+    fn pasted_into(script: &str, text: &str) -> String {
+        let mut session = Session::spawn("test", "bash", &["-c".to_string(), script.to_string()], 10, 60)
+            .expect("the pty should start");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !session.screen.lock().unwrap().screen().contents().contains("ready") {
+            assert!(Instant::now() < deadline, "the program never got ready");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        session.paste(text);
+
+        wait_for_the_end(&session);
+        let printed = session.screen.lock().unwrap().screen().contents();
+        printed
     }
 
     #[test]

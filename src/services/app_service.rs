@@ -603,6 +603,11 @@ impl AppService {
         self.sessions.iter().any(|session| session.is_running())
     }
 
+    /// Every clipboard copy the sessions asked for since the last call.
+    pub fn take_copies(&self) -> Vec<Vec<u8>> {
+        self.sessions.iter().flat_map(|session| session.take_copies()).collect()
+    }
+
     pub fn toggle_sidebar(&mut self) {
         self.sidebar_open = !self.sidebar_open;
         self.focus = if self.sidebar_open || self.active_tab.is_none() {
