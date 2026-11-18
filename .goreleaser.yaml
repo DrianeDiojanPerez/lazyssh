@@ -13,8 +13,10 @@ before:
     # if you don't do these things before calling goreleaser, it might be a
     # good idea to do them here:
     - rustup default stable
+    # every target is added up front, so no build changes the toolchain while
+    # another one is compiling with it
+    - rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-gnu
     - cargo install --locked cargo-zigbuild
-    - cargo install cross
     - cargo fetch --locked
     # nothing is built, tagged or published if the suite is unhappy
     - cargo test --locked
@@ -27,10 +29,12 @@ builds:
     targets:
       - x86_64-unknown-linux-gnu
       - aarch64-unknown-linux-gnu
+  # zig brings its own mingw, which has the libraries newer Rust links on
+  # Windows. The cross image did not, and stopped linking at Rust 1.100
   - id: windows
     builder: rust
-    tool: cross
-    command: build
+    flags:
+      - --release
     targets:
       - x86_64-pc-windows-gnu
 archives:
