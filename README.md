@@ -1,119 +1,67 @@
+<p align="center"><img src="demo/demo.png" alt="lazyssh: an SSH connection manager in the terminal" width="800"></p>
 
-<div align="center">
-  <img src="https://raw.githubusercontent.com/DrianeDiojanPerez/lazyssh/refs/heads/master/demo/demo.png" alt="lazyssh logo" width="800" height="800"/>
-</div>
+A terminal app for your SSH hosts. It reads and edits `~/.ssh/config` directly, shows which hosts are up, and opens each connection in its own tab. Built for Linux, with a Windows build too.
 
-# lazyssh
+- [Install](#install)
+- [Update](#update)
+- [Manual install](#manual-install)
+- [Test](#test)
+- [Docs](#docs)
+- [License](#license)
 
-A simple SSH connection manager for lazy people.
+## Install
 
-## Installation
-
-### Quick Install (Recommended)
-
-**Linux / macOS / WSL:**
-```bash
+```
 curl -fsSL https://raw.githubusercontent.com/DrianeDiojanPerez/lazyssh/refs/heads/master/install.sh | bash
 ```
 
-**Windows (PowerShell):**
-```powershell
-irm https://raw.githubusercontent.com/DrianeDiojanPerez/lazyssh/refs/heads/master/install.ps1 | iex
+It downloads the newest release for your system and puts it in `/usr/local/bin/lazyssh`, asking for your sudo password if it needs to. Then run `lazyssh`.
+
+## Update
+
 ```
-
-### Manual Installation
-
-Download the appropriate binary for your system from the [releases page](https://github.com/DrianeDiojanPerez/lazyssh/releases):
-
-**Linux:**
-```bash
-# Download for your architecture
-wget https://github.com/DrianeDiojanPerez/lazyssh/releases/latest/download/lazyssh_Linux_x86_64.tar.gz
-
-# Extract
-tar -xzf lazyssh_Linux_x86_64.tar.gz
-
-# Install globally
-sudo mv lazyssh /usr/local/bin/
-sudo chmod +x /usr/local/bin/lazyssh
-```
-
-**Windows:**
-```powershell
-# Download the zip file from releases page
-# Extract it
-# Move lazyssh.exe to a folder in your PATH
-```
-
-## Usage
-
-After installation, simply run:
-```bash
-lazyssh
-```
-
-Or check available options:
-```bash
-lazyssh --help
-```
-
-## Updating
-
-```bash
 lazyssh --update
 ```
 
-It fetches the installer and runs it, so it lands the same way it was installed.
+It runs the installer again, which sees the version you have and replaces it with the newest one. `lazyssh --version` prints the one you have.
 
-Or run the installation command again by hand:
+## Manual install
 
-```bash
-# Linux/macOS
-curl -fsSL https://raw.githubusercontent.com/DrianeDiojanPerez/lazyssh/refs/heads/master/install.sh | bash
+1. Download the archive for your system from the [releases page](https://github.com/DrianeDiojanPerez/lazyssh/releases/latest):
 
-# Windows
-irm https://raw.githubusercontent.com/DrianeDiojanPerez/lazyssh/refs/heads/master/install.ps1 | iex
-```
+   | System | File |
+   |---|---|
+   | Linux, Intel or AMD | `lazyssh_Linux_x86_64.tar.gz` |
+   | Linux, ARM | `lazyssh_Linux_arm64.tar.gz` |
+   | Windows | `lazyssh_Windows_x86_64.zip` |
 
-The installer will detect if you're already up to date.
+2. Unpack it and put the binary somewhere in your `PATH`:
+   ```
+   tar -xzf lazyssh_Linux_x86_64.tar.gz
+   sudo install -m 755 lazyssh /usr/local/bin/lazyssh
+   ```
+   On Windows, unzip it and move `lazyssh.exe` to a folder in your `PATH`.
 
-## Supported Platforms
+To build it yourself instead, see [Installing](docs/install.md#build-from-source).
 
-- **Linux**: x86_64, ARM64
-- **Windows**: x86_64
+## Test
 
-## Uninstalling
+- Run `lazyssh`. Your hosts from `~/.ssh/config` are listed on the left, each with a dot: green when its SSH port answers, red when it doesn't.
+- Pick a host and press `Enter`. It connects in a tab inside lazyssh.
+- Press `?` for every key.
 
-**Linux/macOS:**
-```bash
-sudo rm /usr/local/bin/lazyssh
-```
+## Docs
 
-**Windows:**
-```powershell
-Remove-Item "$env:USERPROFILE\bin\lazyssh.exe"
-```
+- [How it works](docs/how-it-works.md): the hosts file, backups, reachability, and the built-in terminal
+- [Installing](docs/install.md): what the installer does, by hand, or from source
+- [Updating](docs/update.md)
+- [Keys](docs/keys.md): every key in the list and in a session
+- [Copy and paste](docs/copy-and-paste.md): copying from a remote nvim to your clipboard, and pasting in
+- [Settings and themes](docs/settings.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Uninstall](docs/uninstall.md)
+- [Releasing](docs/releasing.md)
 
-## Building from Source
+## License
 
-```bash
-# Clone the repository
-git clone https://github.com/DrianeDiojanPerez/lazyssh.git
-cd lazyssh
-
-# Build (requires Go)
-go build -o lazyssh
-
-# Install
-sudo mv lazyssh /usr/local/bin/
-```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Support
-
-If you encounter any issues:
-1. Check the [issues page](https://github.com/DrianeDiojanPerez/lazyssh/issues)
-2. Create a new issue with details about your system and the problem
+MIT. See [LICENSE](LICENSE).
